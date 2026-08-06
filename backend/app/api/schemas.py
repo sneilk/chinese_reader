@@ -51,6 +51,31 @@ class SentenceOut(BaseModel):
     translation: str | None = None
 
 
+class DictEntryOut(BaseModel):
+    headword: str
+    traditional: str | None = None
+    reading: str | None = None
+    senses: list[str] = []
+    source: str
+
+
+class CharGlossOut(BaseModel):
+    """Значение одного знака — для слова, которого в словаре нет."""
+
+    char: str
+    reading: str | None = None
+    senses: list[str] = []
+
+
+class LookupOut(BaseModel):
+    word: str
+    found: bool
+    # Карточка собрана из знаков, а не из статьи о слове целиком.
+    approximate: bool
+    entries: list[DictEntryOut] = []
+    chars: list[CharGlossOut] = []
+
+
 class ChapterOut(BaseModel):
     id: int
     url: str

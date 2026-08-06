@@ -12,4 +12,7 @@ def test_health_ok():
 
 
 def test_unknown_route_404():
-    assert client.get("/api/nope").status_code == 404
+    """Отказ маршрутизатора приходит в том же виде, что и наши собственные."""
+    r = client.get("/api/nope")
+    assert r.status_code == 404
+    assert r.json()["error"]["kind"] == "Not Found"

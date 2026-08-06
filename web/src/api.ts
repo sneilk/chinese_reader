@@ -59,6 +59,30 @@ export interface ChapterAccepted {
   created: boolean
 }
 
+export interface DictEntry {
+  headword: string
+  traditional: string | null
+  reading: string | null
+  senses: string[]
+  source: string
+}
+
+/** Значение одного знака — для слова, которого в словаре нет. */
+export interface CharGloss {
+  char: string
+  reading: string | null
+  senses: string[]
+}
+
+export interface Lookup {
+  word: string
+  found: boolean
+  /** Карточка собрана из знаков, а не из статьи о слове целиком. */
+  approximate: boolean
+  entries: DictEntry[]
+  chars: CharGloss[]
+}
+
 /** Ошибка запроса с разобранным `kind` — на нём строятся сообщения экрана. */
 export class ApiError extends Error {
   readonly kind: string
@@ -108,6 +132,10 @@ export const api = {
   /** Дозалить перевод после отказа. Переведённое не переотправляется. */
   translateChapter: (id: number) =>
     request<ChapterAccepted>(`/chapters/${id}/translate`, { method: 'POST' }),
+
+  /** Значения слова из локальных словарей: без интернета и без задержки. */
+  lookup: (word: string, lang = 'zh') =>
+    request<Lookup>(`/lookup?word=${encodeURIComponent(word)}&lang=${lang}`),
 }
 
 /** Глава читаема начиная с `segmented`: текст и токены уже есть. */

@@ -17,6 +17,7 @@ import { describeStatus } from '../errors'
 import { ChapterText } from '../reader/ChapterText'
 import { SentencePanel } from '../reader/SentencePanel'
 import { buildIndex } from '../reader/tokens'
+import { useLookup } from '../reader/useLookup'
 import { useSelection } from '../reader/useSelection'
 import { useTokenGestures } from '../reader/useTokenGestures'
 import { useChapter } from '../useChapter'
@@ -41,6 +42,14 @@ export function ReaderScreen({ id }: { id: number }) {
   // Обычно idx совпадает с местом в массиве, но полагаться на это не стоит:
   // разъехавшаяся нумерация показала бы перевод соседнего предложения — и
   // выглядело бы это как плохой перевод, а не как ошибка.
+  // Значения ищем только для слов и знаков: во фразе искать нечего, статьи
+  // на неё в словаре нет по определению.
+  const lookupWord =
+    selection.selected && selection.selected.granularity !== 'phrase'
+      ? selection.selected.text
+      : null
+  const lookup = useLookup(lookupWord)
+
   const activeSentence = useMemo(() => {
     const idx = selection.selected?.sentence ?? -1
     if (idx < 0 || !chapter) return null
@@ -121,6 +130,7 @@ export function ReaderScreen({ id }: { id: number }) {
         <SentencePanel
           selected={selection.selected}
           sentence={activeSentence}
+          lookup={lookup}
           onClose={selection.clear}
         />
       )}

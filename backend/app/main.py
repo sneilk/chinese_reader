@@ -4,13 +4,15 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.chapters import router as chapters_router
 from app.api.health import router as health_router
+from app.api.lookup import router as lookup_router
 from app.config import settings
 from app.db.session import SessionLocal
 from app.fetchers.browser import BrowserFetcher
@@ -59,8 +61,13 @@ app.add_middleware(
 )
 
 
-@app.exception_handler(HTTPException)
-async def _http_error(_request: Request, exc: HTTPException) -> JSONResponse:
+# Ловим родительский класс Starlette, а не HTTPException из FastAPI: свои
+# отказы мы бросаем вторым, но 404 на несуществующий путь и 405 на неверный
+# метод порождает маршрутизатор первым. Регистрация только на потомка оставляла
+# бы их в чужом формате `{"detail": ...}` — и фронт разбирал бы две разные
+# формы ошибки, не подозревая об этом.
+@app.exception_handler(StarletteHTTPException)
+async def _http_error(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
     """Ошибки в едином виде (RFC §8): фронт разбирает их по `kind`, а не по тексту."""
     return JSONResponse(
         status_code=exc.status_code,
@@ -80,3 +87,4 @@ async def _validation_error(_request: Request, exc: RequestValidationError) -> J
 
 app.include_router(health_router, prefix="/api")
 app.include_router(chapters_router, prefix="/api")
+app.include_router(lookup_router, prefix="/api")

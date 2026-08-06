@@ -411,10 +411,91 @@ a {
   cursor: pointer;
 }
 
+.panel__reading {
+  color: var(--accent);
+  font-size: 1rem;
+}
+
+/* Панель растёт вместе с содержимым, но не дальше половины экрана: карточка
+   со словарной статьёй легко занимает больше, а текст под ней должен
+   оставаться виден — иначе это уже модалка. */
+.panel__body {
+  max-height: 45dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .panel__translation {
   margin: 0;
   font-size: 1.05rem;
   line-height: 1.45;
+}
+
+/* --- карточка слова --- */
+
+.card__entry {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.card__meta {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  margin-bottom: var(--space-1);
+}
+
+.card__reading {
+  color: var(--accent);
+}
+
+.card__source {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.card__senses {
+  margin: 0;
+  padding-inline-start: 1.4em;
+}
+
+.card__senses li {
+  margin-bottom: var(--space-1);
+}
+
+.card__note {
+  margin: 0 0 var(--space-2);
+  font-size: 0.9rem;
+}
+
+.card__chars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.card__char {
+  display: grid;
+  grid-template-columns: 1.6em minmax(4em, auto) 1fr;
+  gap: var(--space-2);
+  align-items: baseline;
+  margin-bottom: var(--space-2);
+}
+
+.card__char-han {
+  font-family: var(--han);
+  font-size: 1.3rem;
+}
+
+.card__char-reading {
+  color: var(--accent);
+  font-size: 0.95rem;
+}
+
+.card__char-sense {
+  font-size: 0.95rem;
 }
 
 @media (max-width: 480px) {
