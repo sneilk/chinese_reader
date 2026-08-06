@@ -15,6 +15,7 @@ import { ApiError, api, isPending, isReadable } from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 import { describeStatus } from '../errors'
 import { ChapterText } from '../reader/ChapterText'
+import { SentencePanel } from '../reader/SentencePanel'
 import { buildIndex } from '../reader/tokens'
 import { useSelection } from '../reader/useSelection'
 import { useTokenGestures } from '../reader/useTokenGestures'
@@ -36,6 +37,16 @@ export function ReaderScreen({ id }: { id: number }) {
 
   const selection = useSelection(index, content)
   useTokenGestures(containerRef, index, selection)
+
+  // Обычно idx совпадает с местом в массиве, но полагаться на это не стоит:
+  // разъехавшаяся нумерация показала бы перевод соседнего предложения — и
+  // выглядело бы это как плохой перевод, а не как ошибка.
+  const activeSentence = useMemo(() => {
+    const idx = selection.selected?.sentence ?? -1
+    if (idx < 0 || !chapter) return null
+    const direct = chapter.sentences[idx]
+    return direct?.idx === idx ? direct : (chapter.sentences.find((s) => s.idx === idx) ?? null)
+  }, [chapter, selection.selected?.sentence])
 
   async function retranslate() {
     setRetrying(true)
@@ -104,6 +115,14 @@ export function ReaderScreen({ id }: { id: number }) {
         />
       ) : (
         !isPending(chapter.status) && !chapter.error && <p className="muted">Текста пока нет.</p>
+      )}
+
+      {selection.selected && (
+        <SentencePanel
+          selected={selection.selected}
+          sentence={activeSentence}
+          onClose={selection.clear}
+        />
       )}
     </>
   )

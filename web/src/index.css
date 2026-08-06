@@ -160,6 +160,10 @@ a {
 /* Полоса чтения уже: на длинной строке глаз теряет место возврата. */
 .content--reader {
   max-width: 38rem;
+  /* Запас под нижнюю панель: иначе последний абзац оказывается под ней и
+     до него не докрутить. Держится постоянно, чтобы текст не прыгал в момент
+     появления панели. */
+  padding-bottom: 8rem;
 }
 
 /* --- элементы управления --- */
@@ -355,6 +359,62 @@ a {
   font-family: var(--han);
   font-size: 1.4rem;
   margin-bottom: var(--space-5);
+}
+
+/* --- нижняя панель --- */
+
+.panel {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--bg-raised) 96%, transparent);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--border);
+  /* Домашняя полоса iPhone съедает нижние пиксели вместе с текстом. */
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.panel__inner {
+  max-width: 38rem;
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.panel__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.panel__term {
+  font-family: var(--han);
+  font-size: 1.6rem;
+  font-weight: 600;
+}
+
+.panel__kind {
+  font-size: 0.85rem;
+}
+
+.panel__close {
+  margin-inline-start: auto;
+  align-self: center;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  font-size: 1.1rem;
+  /* 44px — минимальная цель для пальца. */
+  min-width: 44px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.panel__translation {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.45;
 }
 
 @media (max-width: 480px) {
