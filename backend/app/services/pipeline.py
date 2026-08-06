@@ -28,12 +28,14 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from urllib.parse import urljoin
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.adapters.base import AdapterFailure
+from app.adapters.base import AdapterFailure, ChapterRaw, SiteAdapter
 from app.adapters.registry import pick_adapter
+from app.config import settings
 from app.db.models import Chapter, Sentence
 from app.domain import ChapterStatus, ErrorKind
 from app.fetchers.base import Fetcher, FetchFailure
@@ -98,8 +100,7 @@ async def _fetch_and_segment(
     chapter.error_detail = None
     session.commit()
 
-    result = await fetcher.get(chapter.url)
-    raw = pick_adapter(chapter.url).parse_chapter(result.html, result.url)
+    raw = await fetch_pages(fetcher, chapter.url, pick_adapter(chapter.url))
 
     # Канон — нормализованный текст: офсеты токенов и предложений считаются
     # по нему, поэтому нормализация обязана произойти до всего остального.
@@ -127,6 +128,58 @@ async def _fetch_and_segment(
         len(canon),
         len(spans),
         len(tokens),
+    )
+
+
+async def fetch_pages(fetcher: Fetcher, url: str, adapter: SiteAdapter) -> ChapterRaw:
+    """Загрузить главу целиком, склеив страницы, если адаптер их указывает.
+
+    Склейка идёт **до** нормализации и сегментации (RFC §4): иначе офсеты и
+    границы предложений считались бы по куску, а не по главе, и разъехались бы
+    ровно на второй странице.
+
+    Потолок в 20 страниц — жёсткий, и при его превышении глава падает с
+    `adapter_error`. Молчаливая обрезка была бы хуже отказа: читатель получил
+    бы главу без конца и никакого признака, что чего-то не хватает.
+
+    Пауза между страницами отдельно здесь не нужна: её держит сам загрузчик
+    (§1.3 концепции), одна на все свои запросы.
+    """
+    pages: list[ChapterRaw] = []
+    visited: set[str] = set()
+    next_url: str | None = url
+
+    while next_url is not None:
+        if next_url in visited:
+            # Кольцо «следующая → предыдущая» встречается на живых сайтах;
+            # без этой проверки оно просто упёрлось бы в потолок страниц.
+            log.warning("глава %s: страница %s уже загружалась, останавливаюсь", url, next_url)
+            break
+        if len(pages) >= settings.max_pages_per_chapter:
+            raise AdapterFailure(
+                ErrorKind.ADAPTER_ERROR,
+                f"страниц больше {settings.max_pages_per_chapter}: "
+                f"это похоже на бесконечную пагинацию, а не на главу",
+            )
+
+        visited.add(next_url)
+        result = await fetcher.get(next_url)
+        page = adapter.parse_chapter(result.html, result.url)
+        pages.append(page)
+
+        # Адаптер вправе вернуть относительную ссылку — считаем её от того
+        # адреса, на котором в итоге оказались, а не от исходного.
+        next_url = urljoin(result.url, page.next_url) if page.next_url else None
+
+    if len(pages) > 1:
+        log.info("глава %s склеена из %s страниц", url, len(pages))
+
+    first = pages[0]
+    if len(pages) == 1:
+        return first
+    return ChapterRaw(
+        title=first.title,
+        paragraphs=[p for page in pages for p in page.paragraphs],
     )
 
 
