@@ -128,7 +128,7 @@
 
 | ID | Задача | Готово, когда | Оценка | Зависит от |
 |---|---|---|---|---|
-| **T1.12** | `POST /api/chapters` (202, идемпотентен по URL), `GET /api/chapters/{id}` (глава целиком), `POST /api/chapters/{id}/translate` | повторный POST с тем же URL в сеть не ходит; happy path и все `error_kind` покрыты тестами | M | T1.10 |
+| ~~**T1.12**~~ ✅ | `POST /api/chapters` (202, идемпотентен по URL), `GET /api/chapters/{id}` (глава целиком), `POST /api/chapters/{id}/translate` | повторный POST в сеть не ходит, глава в `failed` перезапускается; happy path и все `error_kind` покрыты — 21 тест | M | T1.10 |
 
 ### Клиент
 
