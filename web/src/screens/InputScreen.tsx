@@ -1,39 +1,67 @@
 /**
- * Экран ввода URL главы.
+ * Экран ввода URL главы (T1.14).
  *
- * Здесь каркас (T1.13): поле, отправка, переход к чтению. Опрос статуса и
- * человеческие сообщения по каждому `error_kind` — задача T1.14.
+ * Отправили — остаёмся здесь и опрашиваем статус, пока глава не станет
+ * читаемой. Уводить на экран чтения сразу нельзя: `POST` отвечает раньше, чем
+ * появляется текст, и читатель увидел бы пустоту вместо прогресса.
+ *
+ * Отказ показывается здесь же, с человеческим объяснением и кнопкой повтора.
+ * Повтор — это тот же `POST`: глава в `failed` перезапускается (RFC §4), так
+ * что фронту не нужно помнить, чем повтор отличается от первого раза.
  */
 
-import { useState } from 'react'
-import { ApiError, api } from '../api'
+import { useEffect, useState } from 'react'
+import { ApiError, api, isReadable } from '../api'
+import { ErrorNote } from '../components/ErrorNote'
+import { describeStatus } from '../errors'
 import { navigate } from '../router'
+import { useChapter } from '../useChapter'
 
 export function InputScreen() {
   const [url, setUrl] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [chapterId, setChapterId] = useState<number | null>(null)
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<ApiError | null>(null)
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault()
-    if (!url.trim() || busy) return
+  const { chapter, requestError, reload } = useChapter(chapterId)
 
-    setBusy(true)
-    setError(null)
+  // Как только текст есть — уходим читать. Перевод, если он ещё идёт,
+  // догрузится на экране чтения: ждать его здесь незачем.
+  useEffect(() => {
+    if (chapter && isReadable(chapter.status)) {
+      navigate({ name: 'chapter', id: chapter.id })
+    }
+  }, [chapter])
+
+  async function send(target: string) {
+    if (!target || sending) return
+    setSending(true)
+    setSendError(null)
     try {
-      const accepted = await api.createChapter(url.trim())
-      navigate({ name: 'chapter', id: accepted.id })
+      const accepted = await api.createChapter(target)
+      setChapterId(accepted.id)
+      if (accepted.id === chapterId) await reload()
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e))
+      setSendError(e instanceof ApiError ? e : new ApiError('network', String(e)))
     } finally {
-      setBusy(false)
+      setSending(false)
     }
   }
+
+  const failure = chapter?.status === 'failed' ? chapter.error : null
+  const working = Boolean(chapterId) && !failure && !requestError
+  const busy = sending || working
 
   return (
     <>
       <h1>Читать главу</h1>
-      <form onSubmit={submit}>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          void send(url.trim())
+        }}
+      >
         <div className="field">
           <label className="label" htmlFor="url">
             Адрес главы
@@ -47,20 +75,39 @@ export function InputScreen() {
             placeholder="https://51shucheng.net/…"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
+            disabled={busy}
           />
         </div>
-
-        {error && (
-          <div className="note note--error" role="alert">
-            <div className="note__title">Не получилось</div>
-            <p className="note__detail">{error}</p>
-          </div>
-        )}
 
         <button className="button" type="submit" disabled={busy || !url.trim()}>
           {busy ? 'Загружаю…' : 'Загрузить'}
         </button>
       </form>
+
+      {working && (
+        <p className="muted progress" role="status" aria-live="polite">
+          {describeStatus(chapter?.status ?? 'fetching')}
+        </p>
+      )}
+
+      {sendError && <ErrorNote kind={sendError.kind} detail={sendError.message} />}
+
+      {requestError && (
+        <ErrorNote
+          kind={requestError.kind}
+          detail={requestError.message}
+          onRetry={() => void reload()}
+        />
+      )}
+
+      {failure && (
+        <ErrorNote
+          kind={failure.kind}
+          detail={failure.message}
+          busy={sending}
+          onRetry={() => void send(chapter?.url ?? url.trim())}
+        />
+      )}
     </>
   )
 }

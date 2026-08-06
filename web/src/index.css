@@ -247,11 +247,45 @@ a {
   margin-bottom: var(--space-2);
 }
 
+.note__advice {
+  margin: 0 0 var(--space-3);
+}
+
 .note__detail {
   color: var(--text-dim);
   font-size: 0.9rem;
-  margin: 0;
+  margin: 0 0 var(--space-3);
   overflow-wrap: anywhere;
+}
+
+.note__detail code {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  background: var(--bg-sunken);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+.note .button {
+  min-height: 44px;
+  padding-block: var(--space-2);
+}
+
+/* Точка у строки прогресса: без неё «Перевожу…» неотличимо от обычного текста. */
+.progress::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-inline-end: var(--space-2);
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
 }
 
 .muted {

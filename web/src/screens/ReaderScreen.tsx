@@ -1,65 +1,77 @@
 /**
  * Экран чтения главы.
  *
- * Здесь каркас (T1.13): загрузка главы, опрос, пока идёт работа, и показ
- * текста. Рендер по токенам со спанами и жестами — T1.15, панель перевода
- * предложения — T1.16.
+ * Каркас (T1.13) плюс сообщения и дозалив перевода (T1.14). Рендер по токенам
+ * со спанами и жестами — T1.15, панель перевода предложения — T1.16.
+ *
+ * Отказ перевода здесь не прячет текст: глава читаема начиная с `segmented`,
+ * и предупреждение висит над ней, а не вместо неё.
  */
 
-import { useCallback, useEffect, useState } from 'react'
-import { ApiError, api, isPending, isReadable, type Chapter } from '../api'
-
-const POLL_MS = 1500
+import { useState } from 'react'
+import { ApiError, api, isPending, isReadable } from '../api'
+import { ErrorNote } from '../components/ErrorNote'
+import { describeStatus } from '../errors'
+import { useChapter } from '../useChapter'
 
 export function ReaderScreen({ id }: { id: number }) {
-  const [chapter, setChapter] = useState<Chapter | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const { chapter, requestError, loading, reload } = useChapter(id)
+  const [retrying, setRetrying] = useState(false)
+  const [retryError, setRetryError] = useState<ApiError | null>(null)
 
-  const load = useCallback(async () => {
+  async function retranslate() {
+    setRetrying(true)
+    setRetryError(null)
     try {
-      setChapter(await api.getChapter(id))
+      await api.translateChapter(id)
+      await reload()
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e))
+      setRetryError(e instanceof ApiError ? e : new ApiError('network', String(e)))
+    } finally {
+      setRetrying(false)
     }
-  }, [id])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  // Пока конвейер работает, статус опрашивается: загрузка главы асинхронная,
-  // и ответ на POST приходит раньше, чем текст появляется в базе.
-  useEffect(() => {
-    if (!chapter || !isPending(chapter.status)) return
-    const timer = setTimeout(() => void load(), POLL_MS)
-    return () => clearTimeout(timer)
-  }, [chapter, load])
-
-  if (error) {
-    return (
-      <div className="note note--error" role="alert">
-        <div className="note__title">Глава не открылась</div>
-        <p className="note__detail">{error}</p>
-      </div>
-    )
   }
 
-  if (!chapter) {
+  if (requestError) {
+    return <ErrorNote kind={requestError.kind} detail={requestError.message} onRetry={reload} />
+  }
+
+  if (loading || !chapter) {
     return <p className="muted">Загружаю…</p>
   }
+
+  const missingTranslation = chapter.sentences.some((s) => s.translation === null)
 
   return (
     <>
       {chapter.title && <h1 className="reader__title">{chapter.title}</h1>}
 
       {chapter.error && (
-        <div className="note note--warning" role="status">
-          <div className="note__title">{chapter.error.kind}</div>
-          <p className="note__detail">{chapter.error.message}</p>
+        <ErrorNote
+          kind={chapter.error.kind}
+          detail={chapter.error.message}
+          busy={retrying}
+          onRetry={reload}
+        />
+      )}
+
+      {isPending(chapter.status) && (
+        <p className="muted progress" role="status" aria-live="polite">
+          {describeStatus(chapter.status)}
+        </p>
+      )}
+
+      {/* Отдельная кнопка, а не общий «повтор»: перевод дозаливается, уже
+          переведённые предложения не переотправляются (RFC §4). */}
+      {isReadable(chapter.status) && missingTranslation && !isPending(chapter.status) && (
+        <div className="row">
+          <button className="button button--quiet" onClick={() => void retranslate()} disabled={retrying}>
+            {retrying ? 'Перевожу…' : 'Дозалить перевод'}
+          </button>
         </div>
       )}
 
-      {isPending(chapter.status) && <p className="muted">Статус: {chapter.status}…</p>}
+      {retryError && <ErrorNote kind={retryError.kind} detail={retryError.message} />}
 
       {isReadable(chapter.status) && chapter.content ? (
         <div className="reader" lang="zh-Hans">
@@ -72,7 +84,7 @@ export function ReaderScreen({ id }: { id: number }) {
           ))}
         </div>
       ) : (
-        !isPending(chapter.status) && <p className="muted">Текста пока нет.</p>
+        !isPending(chapter.status) && !chapter.error && <p className="muted">Текста пока нет.</p>
       )}
     </>
   )
