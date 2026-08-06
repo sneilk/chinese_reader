@@ -300,6 +300,49 @@ a {
   line-height: var(--reader-line);
   /* Знак препинания в конце строки не должен толкать перенос. */
   hanging-punctuation: allow-end;
+
+  /* Прокрутка остаётся браузеру, горизонтальная протяжка — наша. Значение
+     фиксируется в момент касания и по ходу жеста уже не меняется, поэтому
+     оно статическое. Дубль на строку выше — фолбэк: браузер, не знающий
+     pinch-zoom, отбросил бы всё правило целиком. */
+  touch-action: pan-y;
+  touch-action: pan-y pinch-zoom;
+
+  /* Иначе поверх нашего выделения встаёт нативное: лупа и шторка «Скопировать»
+     на iOS, контекстное меню на Android. Выиграть у них гонку таймеров нельзя,
+     поэтому они выключаются статически. Копирование текста при этом теряется —
+     его вернёт карточка слова (T2.5) своей кнопкой. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.reader:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+/* Токен — обычный текст, пока по нему не попали. Ни рамок, ни отступов:
+   любое изменение геометрии при подсветке заставило бы браузер пересчитывать
+   раскладку на каждом кадре протяжки. Меняется только фон. */
+.tk {
+  border-radius: var(--radius-sm);
+}
+
+.tk.is-selected,
+.ch.is-selected {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+/* Символьный режим: активный токен разобран на знаки, остальной текст цел. */
+.ch {
+  border-radius: 3px;
+}
+
+.tk--split {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .reader__p {

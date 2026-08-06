@@ -1,23 +1,41 @@
 /**
  * Экран чтения главы.
  *
- * Каркас (T1.13) плюс сообщения и дозалив перевода (T1.14). Рендер по токенам
- * со спанами и жестами — T1.15, панель перевода предложения — T1.16.
+ * Текст рендерится по токенам (T1.15): тап — слово, протяжка — фраза в
+ * пределах предложения, долгий тап — символ. Панель перевода предложения —
+ * T1.16, и контракт под неё уже есть: `selected` знает свои офсеты и номер
+ * предложения.
  *
- * Отказ перевода здесь не прячет текст: глава читаема начиная с `segmented`,
- * и предупреждение висит над ней, а не вместо неё.
+ * Отказ перевода не прячет текст: глава читаема начиная с `segmented`, и
+ * предупреждение висит над ней, а не вместо неё.
  */
 
-import { useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { ApiError, api, isPending, isReadable } from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 import { describeStatus } from '../errors'
+import { ChapterText } from '../reader/ChapterText'
+import { buildIndex } from '../reader/tokens'
+import { useSelection } from '../reader/useSelection'
+import { useTokenGestures } from '../reader/useTokenGestures'
 import { useChapter } from '../useChapter'
 
 export function ReaderScreen({ id }: { id: number }) {
   const { chapter, requestError, loading, reload } = useChapter(id)
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState<ApiError | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const content = chapter?.content ?? ''
+  // Индекс перестраивается только при смене главы: опрос статуса приносит
+  // тот же текст, и пересобирать 2500 токенов на каждый ответ незачем.
+  const index = useMemo(
+    () => buildIndex(content, chapter?.tokens ?? [], chapter?.sentences ?? []),
+    [content, chapter?.tokens, chapter?.sentences],
+  )
+
+  const selection = useSelection(index, content)
+  useTokenGestures(containerRef, index, selection)
 
   async function retranslate() {
     setRetrying(true)
@@ -65,7 +83,11 @@ export function ReaderScreen({ id }: { id: number }) {
           переведённые предложения не переотправляются (RFC §4). */}
       {isReadable(chapter.status) && missingTranslation && !isPending(chapter.status) && (
         <div className="row">
-          <button className="button button--quiet" onClick={() => void retranslate()} disabled={retrying}>
+          <button
+            className="button button--quiet"
+            onClick={() => void retranslate()}
+            disabled={retrying}
+          >
             {retrying ? 'Перевожу…' : 'Дозалить перевод'}
           </button>
         </div>
@@ -74,15 +96,12 @@ export function ReaderScreen({ id }: { id: number }) {
       {retryError && <ErrorNote kind={retryError.kind} detail={retryError.message} />}
 
       {isReadable(chapter.status) && chapter.content ? (
-        <div className="reader" lang="zh-Hans">
-          {/* Абзац равен строке канона (normalize.py), поэтому делим по \n.
-              В T1.15 внутри абзацев появятся спаны по токенам. */}
-          {chapter.content.split('\n').map((paragraph, i) => (
-            <p className="reader__p" key={i}>
-              {paragraph}
-            </p>
-          ))}
-        </div>
+        <ChapterText
+          index={index}
+          selection={selection.selection}
+          charSplit={selection.charSplit}
+          containerRef={containerRef}
+        />
       ) : (
         !isPending(chapter.status) && !chapter.error && <p className="muted">Текста пока нет.</p>
       )}
