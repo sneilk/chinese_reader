@@ -9,3 +9,4 @@ alembic==1.19.0
 playwright==1.62.0
 lxml==6.1.1
 trafilatura==2.2.0
+jieba==0.42.1

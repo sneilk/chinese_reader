@@ -46,7 +46,7 @@ def test_upgrade_then_downgrade(tmp_path):
 
     up = _alembic(["upgrade", "head"], tmp_path)
     assert up.returncode == 0, up.stderr
-    assert _tables(db) == {"sources", "documents", "chapters", "sentences"}
+    assert _tables(db) == {"sources", "documents", "chapters", "sentences", "dict_entries"}
 
     down = _alembic(["downgrade", "base"], tmp_path)
     assert down.returncode == 0, down.stderr

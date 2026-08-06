@@ -29,7 +29,15 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.domain import ChapterStatus, ErrorKind
 
-__all__ = ["Chapter", "ChapterStatus", "Document", "ErrorKind", "Sentence", "Source"]
+__all__ = [
+    "Chapter",
+    "ChapterStatus",
+    "DictEntry",
+    "Document",
+    "ErrorKind",
+    "Sentence",
+    "Source",
+]
 
 
 def _created() -> Mapped[datetime]:
@@ -142,4 +150,34 @@ class Sentence(Base):
     __table_args__ = (
         UniqueConstraint("chapter_id", "idx", name="uq_sentences_chapter_idx"),
         CheckConstraint("end_offset >= start_offset", name="ck_sentences_offsets"),
+    )
+
+
+class DictEntry(Base):
+    """Словарная статья.
+
+    Один ряд — одно значение заголовка в одном источнике. У иероглифического
+    слова легко бывает несколько статей (разные чтения, разные источники),
+    поэтому уникальности по headword нет.
+
+    `reading` — пиньинь с диакритикой для показа, `reading_numbered` — исходная
+    форма с цифрами тона: по ней удобно искать и сравнивать.
+    """
+
+    __tablename__ = "dict_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lang: Mapped[str] = mapped_column(String(8), nullable=False, default="zh")
+    headword: Mapped[str] = mapped_column(String(64), nullable=False)
+    traditional: Mapped[str | None] = mapped_column(String(64))
+    reading: Mapped[str | None] = mapped_column(String(128))
+    reading_numbered: Mapped[str | None] = mapped_column(String(128))
+    pos: Mapped[str | None] = mapped_column(String(32))
+    senses_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    freq: Mapped[int | None] = mapped_column(Integer)
+
+    __table_args__ = (
+        Index("ix_dict_entries_lookup", "lang", "headword"),
+        Index("ix_dict_entries_source", "source"),
     )

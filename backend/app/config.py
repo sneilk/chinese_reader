@@ -41,5 +41,10 @@ class Settings(BaseSettings):
     def browser_profile_dir(self) -> Path:
         return self.data_dir / "browser-profile"
 
+    @property
+    def userdict_path(self) -> Path:
+        """Словарь приложения в формате jieba. Собирается из dict_entries."""
+        return self.data_dir / "userdict.txt"
+
 
 settings = Settings()
