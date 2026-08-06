@@ -108,7 +108,7 @@
 | ID | Задача | Готово, когда | Оценка | Зависит от |
 |---|---|---|---|---|
 | ~~**T1.1**~~ ✅ | Каркас репозитория: `backend/` (FastAPI, ruff, pytest, pre-commit, Python 3.12), `web/` (Vite + React + TS), `data/` в `.gitignore` | `pytest` и `ruff` проходят, оба сервера поднимаются, фронт достаёт `/api/health` через прокси | S | — |
-| **T1.2** | SQLAlchemy 2.0 + Alembic; первая миграция: `sources`, `documents`, `chapters`, `sentences` | миграция накатывается и откатывается на чистой БД | S | T1.1 |
+| ~~**T1.2**~~ ✅ | SQLAlchemy 2.0 + Alembic; первая миграция: `sources`, `documents`, `chapters`, `sentences` | накат → откат → повторный накат покрыты тестом; ограничения схемы проверены отдельно | S | T1.1 |
 
 ### Конвейер
 
