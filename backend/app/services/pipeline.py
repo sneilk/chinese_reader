@@ -40,7 +40,8 @@ from app.fetchers.base import Fetcher, FetchFailure
 from app.lang.normalize import normalize
 from app.lang.segment import Segmenter, tokens_to_json
 from app.lang.sentences import split_sentences
-from app.providers.translate import TranslateFailure, Translator
+from app.providers.translate import SOURCE_LANG, TARGET_LANG, TranslateFailure, Translator
+from app.services import budget
 
 log = logging.getLogger(__name__)
 
@@ -151,10 +152,22 @@ async def translate_chapter(
         session.commit()
         return chapter
 
+    texts = [chapter.content[s.start_offset : s.end_offset] for s in pending]
+    try:
+        # До отправки: узнать постфактум, что глава стоила вдвое больше
+        # лимита, — это не потолок, а отчёт.
+        budget.check(session, sum(len(t) for t in texts), spent_on_chapter=chapter.chars_sent)
+    except budget.BudgetExceeded as e:
+        chapter.status = ChapterStatus.SEGMENTED
+        chapter.error_kind = ErrorKind.BUDGET_EXCEEDED
+        chapter.error_detail = e.detail
+        session.commit()
+        log.warning("глава %s: потолок расходов — %s", chapter.id, e.detail)
+        return chapter
+
     chapter.status = ChapterStatus.TRANSLATING
     session.commit()
 
-    texts = [chapter.content[s.start_offset : s.end_offset] for s in pending]
     try:
         result = await translator.translate(texts)
     except TranslateFailure as e:
@@ -178,6 +191,14 @@ async def translate_chapter(
         sentence.translation = text
         sentence.translated_at = translated_at
 
+    budget.record(
+        session,
+        provider="yandex",
+        direction=f"{SOURCE_LANG}-{TARGET_LANG}",
+        chars_sent=result.chars_sent,
+        sentences=len(pending),
+        chapter_id=chapter.id,
+    )
     chapter.chars_sent += result.chars_sent
     chapter.status = ChapterStatus.READY
     chapter.error_kind = None

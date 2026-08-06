@@ -34,3 +34,6 @@ class ErrorKind(enum.StrEnum):
     FETCH_TIMEOUT = "fetch_timeout"
     ADAPTER_ERROR = "adapter_error"
     TRANSLATE_FAILED = "translate_failed"
+    # Отдельно от translate_failed: это не сбой провайдера, а наш потолок
+    # расходов. Чинится не повтором, а решением потратить больше.
+    BUDGET_EXCEEDED = "budget_exceeded"

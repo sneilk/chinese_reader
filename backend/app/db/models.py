@@ -37,6 +37,7 @@ __all__ = [
     "ErrorKind",
     "Sentence",
     "Source",
+    "TranslationUsage",
 ]
 
 
@@ -151,6 +152,32 @@ class Sentence(Base):
         UniqueConstraint("chapter_id", "idx", name="uq_sentences_chapter_idx"),
         CheckConstraint("end_offset >= start_offset", name="ck_sentences_offsets"),
     )
+
+
+class TranslationUsage(Base):
+    """Журнал расходов на перевод: одна строка — один запрос к провайдеру.
+
+    Нужен ровно затем, что просит translation.md §7: посчитать, во сколько
+    обходится месяц чтения, и не дать счёту улететь (RFC §6). Считать по
+    `chapters.chars_sent` нельзя — там накопительный итог главы без даты, а
+    тарификация идёт за календарный месяц.
+
+    Пишется по подтверждённому ответу провайдера — только там известно точное
+    число отправленных символов. Значит при обрыве уже после отправки учёт
+    занижен; потолок мягкий, и на пару запросов это допустимо.
+    """
+
+    __tablename__ = "translation_usage"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    chars_sent: Mapped[int] = mapped_column(Integer, nullable=False)
+    sentences: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    chapter_id: Mapped[int | None] = mapped_column(ForeignKey("chapters.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = _created()
+
+    __table_args__ = (Index("ix_translation_usage_created", "created_at"),)
 
 
 class DictEntry(Base):
