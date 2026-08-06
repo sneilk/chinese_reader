@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import enum
 from datetime import datetime
 
 from sqlalchemy import (
@@ -28,31 +27,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.domain import ChapterStatus, ErrorKind
 
-
-class ChapterStatus(enum.StrEnum):
-    """Состояния конвейера загрузки, RFC §4.
-
-    Глава читаема начиная с `segmented`: текст и токены уже есть, переводов
-    может не быть.
-    """
-
-    FETCHING = "fetching"
-    SEGMENTED = "segmented"
-    TRANSLATING = "translating"
-    READY = "ready"
-    FAILED = "failed"
-
-
-class ErrorKind(enum.StrEnum):
-    """Причины отказа. Пользователь должен видеть их различимо, RFC §4."""
-
-    CHALLENGE = "challenge"
-    NOT_FOUND = "not_found"
-    EMPTY_EXTRACT = "empty_extract"
-    FETCH_TIMEOUT = "fetch_timeout"
-    ADAPTER_ERROR = "adapter_error"
-    TRANSLATE_FAILED = "translate_failed"
+__all__ = ["Chapter", "ChapterStatus", "Document", "ErrorKind", "Sentence", "Source"]
 
 
 def _created() -> Mapped[datetime]:
