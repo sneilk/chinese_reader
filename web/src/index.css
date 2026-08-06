@@ -1,111 +1,298 @@
+/*
+ * Токены и базовые стили.
+ *
+ * Тёмная тема — основная: читают вечером и подолгу, а белый лист в темноте
+ * утомляет быстрее всего. Светлая включается по системной настройке, чтобы
+ * днём на улице текст оставался видимым.
+ *
+ * Размер шрифта крупный по умолчанию (RFC T1.13) и почти не уменьшается на
+ * узких экранах: телефон — основной сценарий чтения, а не исключение из него.
+ * Иероглифу нужен кегль больше, чем латинице, иначе черты в мелком тексте
+ * сливаются и слово не опознать.
+ */
+
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  color-scheme: dark light;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  /* Тёмная тема. Фон не чёрный: чистый чёрный даёт лишний контраст и ореолы
+     вокруг светлых иероглифов. */
+  --bg: #16181c;
+  --bg-raised: #1e2127;
+  --bg-sunken: #101216;
+  --text: #e6e6e8;
+  --text-dim: #9aa0aa;
+  --border: #2c3038;
+  --accent: #7aa2f7;
+  --accent-contrast: #0d1117;
+  --danger: #f2777a;
+  --warning: #e0af68;
+  --ok: #9ece6a;
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
+  /* Шкала отступов: одна на всё приложение, кратна четырём. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+
+  --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Шрифты с иероглифами: системные CJK идут первыми, иначе браузер соберёт
+     строку из подставных глифов разного веса. */
+  --han: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC',
+    'Microsoft YaHei', var(--sans);
+
+  --text-size: 17px;
+  --reader-size: 26px;
+  --reader-line: 2;
+
+  font: var(--text-size) / 1.5 var(--sans);
   color: var(--text);
   background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+  text-size-adjust: 100%;
 }
 
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+    --bg: #fbfaf8;
+    --bg-raised: #fff;
+    --bg-sunken: #f0eeea;
+    --text: #1b1a18;
+    --text-dim: #605c56;
+    --border: #ddd9d2;
+    --accent: #2f5fd0;
+    --accent-contrast: #fff;
+    --danger: #b3261e;
+    --warning: #8a5a00;
+    --ok: #2e6b2e;
   }
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
+* {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
 }
 
 h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+h2,
+h3 {
+  line-height: 1.25;
+  margin: 0 0 var(--space-3);
+  font-weight: 650;
 }
 
 h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
+  font-size: 1.5rem;
 }
+
 h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
+  font-size: 1.2rem;
+}
+
+p {
+  margin: 0 0 var(--space-4);
+}
+
+a {
+  color: var(--accent);
+}
+
+/* --- каркас страницы --- */
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar__brand {
+  font-weight: 650;
+  color: var(--text);
+  text-decoration: none;
+  margin-inline-end: auto;
+}
+
+.topbar__link {
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+}
+
+.topbar__link:hover,
+.topbar__link--active {
+  color: var(--text);
+  background: var(--bg-raised);
+}
+
+.content {
+  flex: 1;
+  width: 100%;
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4) var(--space-7);
+}
+
+/* Полоса чтения уже: на длинной строке глаз теряет место возврата. */
+.content--reader {
+  max-width: 38rem;
+}
+
+/* --- элементы управления --- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.label {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.input {
+  width: 100%;
+  /* 16px и больше: на iOS поле с мелким шрифтом заставляет страницу зумиться
+     при фокусе, и вёрстка «уезжает» на ровном месте. */
+  font: 1rem var(--sans);
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  min-height: 48px;
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.button {
+  font: 600 1rem var(--sans);
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-5);
+  /* 48px — палец, а не курсор. */
+  min-height: 48px;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.button--quiet {
+  color: var(--text);
+  background: transparent;
+  border-color: var(--border);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+/* --- сообщения --- */
+
+.note {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.note--error {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.note--warning {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+}
+
+.note__title {
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+
+.note__detail {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--text-dim);
+}
+
+/* --- текст главы --- */
+
+.reader {
+  font-family: var(--han);
+  font-size: var(--reader-size);
+  line-height: var(--reader-line);
+  /* Знак препинания в конце строки не должен толкать перенос. */
+  hanging-punctuation: allow-end;
+}
+
+.reader__p {
+  /* Между абзацами интервал меньше строки: иначе диалог из коротких реплик
+     рассыпается на отдельные экраны. */
+  margin: 0 0 var(--space-4);
+}
+
+.reader__title {
+  font-family: var(--han);
+  font-size: 1.4rem;
+  margin-bottom: var(--space-5);
+}
+
+@media (max-width: 480px) {
+  :root {
+    --reader-size: 24px;
+  }
+
+  .content {
+    padding-inline: var(--space-3);
   }
 }
-p {
-  margin: 0;
-}
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
