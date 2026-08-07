@@ -24,9 +24,12 @@ say "собираю фронт"
 say "синхронизирую код"
 # --delete чистит то, чего в репозитории уже нет: иначе удалённый модуль
 # продолжает жить на машине и импортируется как ни в чём не бывало.
+# Исключение '/data/' якорное: без ведущего слэша rsync вырезает каталог с
+# таким именем на любом уровне, а значит и tests/data с фикстурами — на
+# машине их потом не хватает ровно тогда, когда захочется что-то проверить.
 rsync -az --delete \
 	--exclude '.venv/' --exclude '__pycache__/' --exclude '.pytest_cache/' \
-	--exclude '.ruff_cache/' --exclude 'data/' \
+	--exclude '.ruff_cache/' --exclude '/data/' \
 	"$ROOT/backend/" "$TARGET:$APP_DIR/backend/"
 
 rsync -az --delete "$ROOT/web/dist/" "$TARGET:$APP_DIR/web/"
