@@ -1,0 +1,23 @@
+[Unit]
+Description=Резервная копия chinese_reader
+Documentation=file:///opt/chinese-reader/backend/scripts/backup.py
+# Копию снимаем с работающего сервиса: .backup даёт согласованный снимок и
+# останавливать ничего не нужно.
+After=chinese-reader.service
+
+[Service]
+Type=oneshot
+User=yc-user
+Group=yc-user
+WorkingDirectory=/opt/chinese-reader/backend
+Environment=PYTHONUNBUFFERED=1
+Environment=DATA_DIR=/opt/chinese-reader/data
+Environment=PYTHONPATH=/opt/chinese-reader/backend
+
+# --keep 7: неделя копий. База со словарями весит сотни мегабайт, и держать
+# их бесконечно значит однажды заполнить диск ровно в тот момент, когда на
+# нём нужно место для новой копии.
+ExecStart=/opt/chinese-reader/venv/bin/python scripts/backup.py --keep 7
+
+NoNewPrivileges=true
+PrivateTmp=true

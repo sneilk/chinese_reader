@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Выкладка на ВМ (T1.18). Запускается с рабочей машины:
+#
+#   deploy/deploy.sh [пользователь@адрес]
+#
+# Что делает: собирает фронт, синхронизирует код, ставит зависимости,
+# накатывает миграции, перезапускает сервис.
+#
+# Чего НЕ делает — и это главное: не трогает `data/`. Там база, профиль
+# браузера с куками, за которые заплачено проходом челленджа (T0.3), и
+# словарные дампы. Затереть их выкладкой значит потерять то, что не
+# восстанавливается из репозитория.
+set -euo pipefail
+
+TARGET="${1:-yc-user@89.169.158.177}"
+APP_DIR=/opt/chinese-reader
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+say() { printf '\n==> %s\n' "$1"; }
+
+say "собираю фронт"
+(cd "$ROOT/web" && npm run build)
+
+say "синхронизирую код"
+# --delete чистит то, чего в репозитории уже нет: иначе удалённый модуль
+# продолжает жить на машине и импортируется как ни в чём не бывало.
+rsync -az --delete \
+	--exclude '.venv/' --exclude '__pycache__/' --exclude '.pytest_cache/' \
+	--exclude '.ruff_cache/' --exclude 'data/' \
+	"$ROOT/backend/" "$TARGET:$APP_DIR/backend/"
+
+rsync -az --delete "$ROOT/web/dist/" "$TARGET:$APP_DIR/web/"
+rsync -az "$ROOT/deploy/" "$TARGET:$APP_DIR/deploy/"
+
+say "зависимости и миграции"
+ssh "$TARGET" 'bash -s' <<'REMOTE'
+set -euo pipefail
+cd /opt/chinese-reader
+
+# venv переживает выкладки: пересоздавать его каждый раз — минуты впустую.
+[ -x venv/bin/python ] || python3 -m venv venv
+venv/bin/pip install -q --upgrade pip
+venv/bin/pip install -q -r backend/requirements.txt
+
+cd backend
+DATA_DIR=/opt/chinese-reader/data ../venv/bin/alembic upgrade head
+REMOTE
+
+say "перезапускаю сервис"
+ssh "$TARGET" 'sudo systemctl restart chinese-reader && sleep 2 && systemctl is-active chinese-reader'
+
+say "проверяю живость"
+ssh "$TARGET" 'curl -fsS localhost:8000/api/health && echo'
+
+say "готово"

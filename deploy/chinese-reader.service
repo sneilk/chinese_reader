@@ -1,0 +1,46 @@
+[Unit]
+Description=chinese_reader backend
+Documentation=https://github.com/eiztna/chinese_reader
+After=network-online.target xvfb.service
+Wants=network-online.target
+# Не Requires: загрузчику нужен экран, но API и чтение сохранённых глав
+# работают и без него. Падать целиком из-за Xvfb — потерять и то, что живо.
+After=xvfb.service
+
+[Service]
+Type=exec
+User=yc-user
+Group=yc-user
+WorkingDirectory=/opt/chinese-reader/backend
+
+# Ключи переводчика. Файл 600 root:root, systemd читает его до смены
+# пользователя — процессу достаются только значения, не сам файл.
+EnvironmentFile=/etc/chinese-reader/env
+
+Environment=PYTHONUNBUFFERED=1
+# Логи уходят в stdout, а оттуда в journald: своей ротации не нужно.
+Environment=DATA_DIR=/opt/chinese-reader/data
+# Экран Xvfb: headless Cloudflare отбивает даже с живыми куками (T0.3).
+Environment=DISPLAY=:99
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/chinese-reader/ms-playwright
+# Свой HOME внутри данных. Chromium пишет в ~/.config и ~/.cache, и без
+# доступного домашнего каталога падает ещё до открытия страницы — его
+# crashpad ругается на «--database is required» и убивает процесс сигналом.
+Environment=HOME=/opt/chinese-reader/data/home
+
+# Слушаем только петлю: наружу отдаёт Caddy, он же держит TLS и пароль.
+ExecStart=/opt/chinese-reader/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+Restart=always
+RestartSec=3
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+# ProtectHome здесь намеренно НЕ включён: он прячет /home, а Chromium без
+# домашнего каталога не стартует вовсе. Вместо запрета — свой HOME выше.
+# Данные и профиль браузера — единственное, что переживает выкладку.
+ReadWritePaths=/opt/chinese-reader/data
+
+[Install]
+WantedBy=multi-user.target

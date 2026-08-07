@@ -4,9 +4,9 @@
 git не кладётся (83 МБ и чужая база), а привязывать тесты к его содержимому
 значит ломать их при каждом обновлении словаря.
 
-На живом дампе парсер пока не прогонялся — файла нет ни локально, ни в
-репозитории. Разбор сделан по описанию формата из T0.7, и это стоит проверить
-первым же импортом.
+Форма фикстуры сверена с живой выборкой T0.7 на ВМ. Именно та сверка и
+показала, что чтение лежит отдельной строкой после заголовка, а не в `[p]`:
+до неё парсер не находил пиньинь ни у одной статьи из двадцати семи.
 """
 
 import json
@@ -102,13 +102,25 @@ def test_senses_collected_without_examples(entries):
     assert entry.senses == ["1) учиться, заниматься", "2) осваивать, изучать"]
 
 
-def test_reading_taken_from_pinyin_mark(entries):
+def test_reading_taken_from_its_own_line(entries):
+    """Чтение — отдельная строка сразу после заголовка, а не содержимое [p].
+
+    Выяснилось на живой фикстуре T0.7: пиньинь не нашёлся ни у одной из
+    двадцати семи статей, хотя в файле его восемьдесят девять слогов.
+    """
     assert by_headword(entries, "窗户").reading == "chuāng hu"
+    assert by_headword(entries, "学习").reading == "xué xí"
 
 
 def test_part_of_speech_is_not_a_reading(entries):
-    """`гл.` — помета, и в поле чтения ей делать нечего."""
-    assert by_headword(entries, "学习").reading is None
+    """`гл.` — помета: она уходит вместе с [p] и в чтение не попадает."""
+    assert "гл." not in (by_headword(entries, "学习").senses or [""])[0]
+
+
+def test_entry_without_reading(entries):
+    """Чтение есть не у каждой статьи, и это нормально."""
+    assert by_headword(entries, "一见如故").reading is None
+    assert by_headword(entries, "一见如故").senses == ["сойтись с первой встречи"]
 
 
 def test_variant_headwords_share_one_card(entries):
@@ -116,6 +128,14 @@ def test_variant_headwords_share_one_card(entries):
     entry = by_headword(entries, "书")
     assert entry.headwords == ["書", "书"]
     assert entry.senses == ["книга"]
+    assert entry.reading == "shū"
+
+
+def test_bom_does_not_become_an_entry():
+    """BOM в начале файла: без защиты первая директива станет заголовком."""
+    lines = ['\ufeff#NAME "словарь"', "学习", "\t[m1]учиться[/m]"]
+    entries = list(parse_dsl(lines))
+    assert [h for e in entries for h in e.headwords] == ["学习"]
 
 
 def test_entry_without_body_is_skipped(entries):
