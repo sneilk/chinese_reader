@@ -8,11 +8,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.db.models import Chapter
+from app.db.models import Chapter, UserWord
 from app.domain import ChapterStatus
 
 
@@ -74,6 +75,81 @@ class LookupOut(BaseModel):
     approximate: bool
     entries: list[DictEntryOut] = []
     chars: list[CharGlossOut] = []
+
+
+class ContextIn(BaseModel):
+    """Предложение, в котором слово встретилось, вместе с офсетами внутри него."""
+
+    sentence: str = Field(min_length=1, max_length=4000)
+    offset_start: int = Field(ge=0)
+    offset_end: int = Field(ge=0)
+    chapter_id: int | None = None
+    sentence_id: int | None = None
+
+
+class WordCreate(BaseModel):
+    headword: str = Field(min_length=1, max_length=64)
+    lang: str = Field(default="zh", max_length=8)
+    reading: str | None = Field(default=None, max_length=128)
+    user_translation: str | None = None
+    note: str | None = None
+    context: ContextIn | None = None
+
+
+class WordUpdate(BaseModel):
+    """Правка своих полей. Пропущенное поле не трогаем, пустая строка стирает."""
+
+    reading: str | None = Field(default=None, max_length=128)
+    user_translation: str | None = None
+    note: str | None = None
+
+
+class ContextOut(BaseModel):
+    sentence: str
+    offset_start: int
+    offset_end: int
+    chapter_id: int | None = None
+    sentence_id: int | None = None
+    created_at: datetime
+
+
+class WordOut(BaseModel):
+    id: int
+    lang: str
+    headword: str
+    reading: str | None = None
+    user_translation: str | None = None
+    note: str | None = None
+    added_at: datetime
+    contexts: list[ContextOut] = []
+
+    @classmethod
+    def of(cls, word: UserWord) -> WordOut:
+        return cls(
+            id=word.id,
+            lang=word.lang,
+            headword=word.headword,
+            reading=word.reading,
+            user_translation=word.user_translation,
+            note=word.note,
+            added_at=word.added_at,
+            contexts=[
+                ContextOut(
+                    sentence=c.sentence,
+                    offset_start=c.offset_start,
+                    offset_end=c.offset_end,
+                    chapter_id=c.chapter_id,
+                    sentence_id=c.sentence_id,
+                    created_at=c.created_at,
+                )
+                for c in word.contexts
+            ],
+        )
+
+
+class WordsPage(BaseModel):
+    items: list[WordOut]
+    total: int
 
 
 class ChapterOut(BaseModel):

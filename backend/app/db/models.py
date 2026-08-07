@@ -32,12 +32,15 @@ from app.domain import ChapterStatus, ErrorKind
 __all__ = [
     "Chapter",
     "ChapterStatus",
+    "Context",
     "DictEntry",
     "Document",
     "ErrorKind",
     "Sentence",
     "Source",
     "TranslationUsage",
+    "UserWord",
+    "WordOccurrence",
 ]
 
 
@@ -152,6 +155,101 @@ class Sentence(Base):
         UniqueConstraint("chapter_id", "idx", name="uq_sentences_chapter_idx"),
         CheckConstraint("end_offset >= start_offset", name="ck_sentences_offsets"),
     )
+
+
+class UserWord(Base):
+    """Слово из личного словаря.
+
+    Уникально по паре (язык, заголовок): одно слово — одна карточка, сколько
+    бы раз читатель на него ни наткнулся. Повторное сохранение добавляет
+    контекст, а не заводит дубль.
+
+    `user_translation` и `note` — свои поля читателя, и они важнее словарных:
+    именно правленый перевод попадёт в глоссарий переводчика (T0.6 показал,
+    что в глоссарий должны идти только слова с заведомо неверным дефолтным
+    переводом, а не весь словарь).
+
+    `status`, `due_at`, `ease` — задел под интервальные повторения. В MVP не
+    используются и в UI не показываются; заведены сразу, чтобы не мигрировать
+    таблицу со словами ради трёх колонок.
+    """
+
+    __tablename__ = "user_words"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lang: Mapped[str] = mapped_column(String(8), nullable=False, default="zh")
+    headword: Mapped[str] = mapped_column(String(64), nullable=False)
+    reading: Mapped[str | None] = mapped_column(String(128))
+
+    user_translation: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="new")
+    added_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    due_at: Mapped[datetime | None] = mapped_column(DateTime)
+    ease: Mapped[int | None] = mapped_column(Integer)
+
+    contexts: Mapped[list[Context]] = relationship(
+        back_populates="user_word",
+        cascade="all, delete-orphan",
+        order_by="Context.created_at",
+    )
+
+    __table_args__ = (UniqueConstraint("lang", "headword", name="uq_user_words_lang_headword"),)
+
+
+class Context(Base):
+    """Предложение, в котором слово встретилось.
+
+    `sentence` хранит текст копией намеренно (RFC §7): карточка должна
+    пережить удаление главы. По той же причине ссылки на главу и предложение
+    обнуляются, а не удаляют контекст следом за ними — иначе смысл копии
+    терялся бы ровно в тот момент, когда она нужна.
+    """
+
+    __tablename__ = "contexts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_word_id: Mapped[int] = mapped_column(
+        ForeignKey("user_words.id", ondelete="CASCADE"), nullable=False
+    )
+    chapter_id: Mapped[int | None] = mapped_column(ForeignKey("chapters.id", ondelete="SET NULL"))
+    sentence_id: Mapped[int | None] = mapped_column(ForeignKey("sentences.id", ondelete="SET NULL"))
+
+    sentence: Mapped[str] = mapped_column(Text, nullable=False)
+    # Офсеты слова внутри `sentence`, а не внутри главы: глава может исчезнуть.
+    offset_start: Mapped[int] = mapped_column(Integer, nullable=False)
+    offset_end: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = _created()
+
+    user_word: Mapped[UserWord] = relationship(back_populates="contexts")
+
+    __table_args__ = (
+        CheckConstraint("offset_end >= offset_start", name="ck_contexts_offsets"),
+        Index("ix_contexts_user_word", "user_word_id"),
+    )
+
+
+class WordOccurrence(Base):
+    """Сколько раз слово встретилось в главе.
+
+    Агрегат вместо таблицы токенов (segmentation.md §6): книга дала бы сотни
+    тысяч строк, а вопросы к ним всего два — «где ещё встречалось это слово»
+    и «сколько раз». Наполняется при разборе главы.
+    """
+
+    __tablename__ = "word_occurrences"
+
+    headword: Mapped[str] = mapped_column(String(64), primary_key=True)
+    chapter_id: Mapped[int] = mapped_column(
+        ForeignKey("chapters.id", ondelete="CASCADE"), primary_key=True
+    )
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (Index("ix_word_occurrences_headword", "headword"),)
 
 
 class TranslationUsage(Base):

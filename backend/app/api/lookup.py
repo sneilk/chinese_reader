@@ -36,7 +36,5 @@ def read_lookup(
             )
             for e in result.entries
         ],
-        chars=[
-            CharGlossOut(char=c.char, reading=c.reading, senses=c.senses) for c in result.chars
-        ],
+        chars=[CharGlossOut(char=c.char, reading=c.reading, senses=c.senses) for c in result.chars],
     )

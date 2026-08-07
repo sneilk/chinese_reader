@@ -53,6 +53,9 @@ def test_upgrade_then_downgrade(tmp_path):
         "sentences",
         "dict_entries",
         "translation_usage",
+        "user_words",
+        "contexts",
+        "word_occurrences",
     }
 
     down = _alembic(["downgrade", "base"], tmp_path)
