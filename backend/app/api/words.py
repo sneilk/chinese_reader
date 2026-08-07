@@ -11,10 +11,12 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.deps import SessionDep
+from app.api.deps import OptionalSegmenterDep, SessionDep
 from app.api.schemas import WordCreate, WordOut, WordsPage, WordUpdate
+from app.config import settings
 from app.db.models import UserWord
 from app.domain import ErrorKind
+from app.lang.segment import teach_word
 from app.services.words import (
     ContextInput,
     WordError,
@@ -37,11 +39,20 @@ def _get_or_404(session: SessionDep, word_id: int) -> UserWord:
 
 
 @router.post("/words", status_code=status.HTTP_201_CREATED, response_model=WordOut)
-def create_word(payload: WordCreate, session: SessionDep) -> WordOut:
-    """Сохранить слово с контекстом.
+def create_word(
+    payload: WordCreate,
+    session: SessionDep,
+    segmenter: OptionalSegmenterDep = None,
+) -> WordOut:
+    """Сохранить слово с контекстом и научить ему сегментатор (T2.7).
 
     Повторное сохранение того же слова добавляет контекст к существующей
     карточке: одно слово — одна запись, сколько бы раз оно ни встретилось.
+
+    Сохранение — это и есть правка границ: читатель склеил `张仙姑` из двух
+    кусков, и с этого момента слово режется целиком. В новеллах имя героя
+    встречается сотнями раз, поэтому одна правка окупается сразу
+    (segmentation.md §5).
     """
     context = None
     if payload.context is not None:
@@ -67,6 +78,11 @@ def create_word(payload: WordCreate, session: SessionDep) -> WordOut:
         # 422 числом, а не константой: имя HTTP_422_UNPROCESSABLE_ENTITY в
         # starlette объявлено устаревшим, а новое есть не во всех версиях.
         raise HTTPException(422, str(e)) from e
+
+    # Учим только на первом сохранении: при повторном слово уже в userdict,
+    # и дописывание плодило бы одинаковые строки в файле.
+    if _created:
+        teach_word(segmenter, settings.userdict_path, word.headword)
 
     return WordOut.of(word)
 

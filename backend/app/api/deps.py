@@ -44,6 +44,16 @@ def get_segmenter(request: Request) -> Segmenter:
     return request.app.state.segmenter
 
 
+def get_optional_segmenter(request: Request) -> Segmenter | None:
+    """Сегментатор там, где он желателен, но не обязателен.
+
+    Правку границ надо сохранить в любом случае: если сегментатор почему-то
+    не поднялся, слово всё равно попадёт в базу, а в userdict — из неё при
+    следующей пересборке. Терять правку читателя из-за этого нельзя.
+    """
+    return getattr(request.app.state, "segmenter", None)
+
+
 def get_translator(request: Request) -> Translator | None:
     """`None` означает «переводчик не настроен» — глава останется на segmented."""
     return getattr(request.app.state, "translator", None)
@@ -55,4 +65,5 @@ SessionDep = Annotated[Session, Depends(get_session)]
 FactoryDep = Annotated[SessionFactory, Depends(get_session_factory)]
 FetcherDep = Annotated[Fetcher, Depends(get_fetcher)]
 SegmenterDep = Annotated[Segmenter, Depends(get_segmenter)]
+OptionalSegmenterDep = Annotated[Segmenter | None, Depends(get_optional_segmenter)]
 TranslatorDep = Annotated[Translator | None, Depends(get_translator)]

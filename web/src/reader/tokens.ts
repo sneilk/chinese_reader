@@ -175,6 +175,24 @@ export function isSelectable(kind: TokenKind): boolean {
   return kind === 'word' || kind === 'latin' || kind === 'digit'
 }
 
+/**
+ * Длина в кодовых точках — в тех же единицах, в каких офсеты хранит бэкенд.
+ *
+ * Наружу (в контекст сохранённого слова) офсеты обязаны уезжать по кодовым
+ * точкам, иначе на редком иероглифе они разойдутся с python-стороной ровно
+ * так же, как разошлись бы при рендере.
+ */
+export function codePointLength(text: string): number {
+  let count = 0
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    // Ведущий суррогат: пара считается одним знаком.
+    if (code >= 0xd800 && code <= 0xdbff) i++
+    count++
+  }
+  return count
+}
+
 export interface CharPiece {
   start: number
   end: number

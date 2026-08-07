@@ -10,7 +10,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import type { CharSplit, TokenRange } from './ChapterText'
 import type { ChapterIndex } from './tokens'
-import { clampToSentence, isSelectable } from './tokens'
+import { clampToSentence, codePointLength, isSelectable } from './tokens'
 
 /** То, что выделено, — в терминах текста, а не индексов. Контракт для карточки. */
 export interface Selected {
@@ -21,6 +21,28 @@ export interface Selected {
   /** Индекс предложения, в котором это выделено; -1 — вне предложений. */
   sentence: number
   granularity: 'token' | 'phrase' | 'char'
+}
+
+/**
+ * Контекст выделения для сохранения в словарь: предложение целиком и офсеты
+ * слова внутри него — в кодовых точках, как их хранит бэкенд.
+ */
+export function contextOf(
+  index: ChapterIndex,
+  content: string,
+  selected: Selected,
+): { sentence: string; offset_start: number; offset_end: number } | null {
+  const i = selected.sentence
+  if (i < 0 || i >= index.sentenceStart.length) return null
+
+  const from = index.sentenceStart[i]
+  const sentence = content.slice(from, index.sentenceEnd[i])
+  const start = codePointLength(content.slice(from, selected.start))
+  return {
+    sentence,
+    offset_start: start,
+    offset_end: start + codePointLength(selected.text),
+  }
 }
 
 export interface SelectionState {

@@ -46,6 +46,9 @@ class ChapterAccepted(BaseModel):
 
 
 class SentenceOut(BaseModel):
+    # `id` нужен, чтобы сохранённое слово ссылалось на конкретное предложение,
+    # а не только на его текст (contexts.sentence_id).
+    id: int
     idx: int
     start: int
     end: int
@@ -179,6 +182,7 @@ class ChapterOut(BaseModel):
             tokens=json.loads(chapter.tokens_json) if chapter.tokens_json else [],
             sentences=[
                 SentenceOut(
+                    id=s.id,
                     idx=s.idx,
                     start=s.start_offset,
                     end=s.end_offset,

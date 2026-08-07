@@ -15,10 +15,10 @@ import { ApiError, api, isPending, isReadable } from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 import { describeStatus } from '../errors'
 import { ChapterText } from '../reader/ChapterText'
-import { SentencePanel } from '../reader/SentencePanel'
+import { SentencePanel, type SaveState } from '../reader/SentencePanel'
 import { buildIndex } from '../reader/tokens'
 import { useLookup } from '../reader/useLookup'
-import { useSelection } from '../reader/useSelection'
+import { contextOf, useSelection } from '../reader/useSelection'
 import { useTokenGestures } from '../reader/useTokenGestures'
 import { useChapter } from '../useChapter'
 
@@ -56,6 +56,32 @@ export function ReaderScreen({ id }: { id: number }) {
     const direct = chapter.sentences[idx]
     return direct?.idx === idx ? direct : (chapter.sentences.find((s) => s.idx === idx) ?? null)
   }, [chapter, selection.selected?.sentence])
+
+  // Состояние сохранения живёт по слову: перешли на другое — кнопка снова
+  // готова, а «в словаре» не остаётся висеть от прошлого.
+  const [saved, setSaved] = useState<Record<string, SaveState>>({})
+  const selectedText = selection.selected?.text ?? ''
+  const saveState: SaveState = saved[selectedText] ?? 'idle'
+
+  async function saveWord() {
+    const selected = selection.selected
+    if (!selected || !chapter) return
+
+    setSaved((prev) => ({ ...prev, [selected.text]: 'saving' }))
+    const context = contextOf(index, content, selected)
+    try {
+      await api.saveWord({
+        headword: selected.text,
+        reading: lookup?.entries[0]?.reading ?? null,
+        context: context
+          ? { ...context, chapter_id: chapter.id, sentence_id: activeSentence?.id ?? null }
+          : undefined,
+      })
+      setSaved((prev) => ({ ...prev, [selected.text]: 'saved' }))
+    } catch {
+      setSaved((prev) => ({ ...prev, [selected.text]: 'failed' }))
+    }
+  }
 
   async function retranslate() {
     setRetrying(true)
@@ -131,6 +157,8 @@ export function ReaderScreen({ id }: { id: number }) {
           selected={selection.selected}
           sentence={activeSentence}
           lookup={lookup}
+          saveState={saveState}
+          onSave={() => void saveWord()}
           onClose={selection.clear}
         />
       )}

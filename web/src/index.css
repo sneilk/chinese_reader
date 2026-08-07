@@ -498,6 +498,102 @@ a {
   font-size: 0.95rem;
 }
 
+.panel__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.panel__actions .button {
+  min-height: 40px;
+  padding-block: var(--space-2);
+}
+
+.panel__hint {
+  font-size: 0.85rem;
+}
+
+/* --- экран словаря --- */
+
+.words {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.word {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.word__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.word__han {
+  font-family: var(--han);
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.word__reading {
+  color: var(--accent);
+}
+
+.word__date {
+  margin-inline-start: auto;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.word__context {
+  font-family: var(--han);
+  font-size: 1.05rem;
+  line-height: 1.7;
+  margin: 0 0 var(--space-3);
+  color: var(--text-dim);
+}
+
+.word__mark {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 0 2px;
+}
+
+/* Поля правки по месту: карточка словаря — две строки текста, отдельный
+   экран редактирования ради них был бы лишним шагом. */
+.input--inline {
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.word__actions {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.word__actions .button {
+  min-height: 40px;
+  padding-block: var(--space-2);
+}
+
+.word__delete {
+  margin-inline-start: auto;
+  color: var(--danger);
+}
+
 @media (max-width: 480px) {
   :root {
     --reader-size: 24px;

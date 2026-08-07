@@ -25,6 +25,16 @@ const GRANULARITY: Record<Selected['granularity'], string> = {
   char: 'знак',
 }
 
+/** Состояние кнопки «в словарь»: она же — правка границ (T2.7). */
+export type SaveState = 'idle' | 'saving' | 'saved' | 'failed'
+
+const SAVE_LABEL: Record<SaveState, string> = {
+  idle: 'В словарь',
+  saving: 'Сохраняю…',
+  saved: 'В словаре',
+  failed: 'Не вышло, ещё раз',
+}
+
 function Entries({ lookup }: { lookup: Lookup }) {
   return (
     <>
@@ -72,11 +82,15 @@ export function SentencePanel({
   selected,
   sentence,
   lookup,
+  saveState,
+  onSave,
   onClose,
 }: {
   selected: Selected
   sentence: Sentence | null
   lookup: Lookup | null
+  saveState: SaveState
+  onSave: () => void
   onClose: () => void
 }) {
   const reading = lookup?.entries[0]?.reading
@@ -114,6 +128,23 @@ export function SentencePanel({
           {lookup && !lookup.found && !lookup.approximate && (
             <p className="card__note muted">В словарях этого нет.</p>
           )}
+
+          {/* Сохранение — оно же правка границ: с этого момента сегментатор
+              режет выделенное целиком, и в следующей главе имя героя не
+              рассыплется (segmentation.md §5). */}
+          <div className="panel__actions">
+            <button
+              className="button button--quiet"
+              type="button"
+              onClick={onSave}
+              disabled={saveState === 'saving' || saveState === 'saved'}
+            >
+              {SAVE_LABEL[saveState]}
+            </button>
+            {saveState === 'saved' && (
+              <span className="muted panel__hint">Дальше режется целиком</span>
+            )}
+          </div>
         </div>
       </div>
     </aside>

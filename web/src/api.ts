@@ -35,10 +35,35 @@ export type Token = [number, number, TokenKind]
 export type TokenKind = 'word' | 'punct' | 'latin' | 'digit' | 'space'
 
 export interface Sentence {
+  id: number
   idx: number
   start: number
   end: number
   translation: string | null
+}
+
+export interface WordContext {
+  sentence: string
+  offset_start: number
+  offset_end: number
+  chapter_id?: number | null
+  sentence_id?: number | null
+}
+
+export interface UserWord {
+  id: number
+  lang: string
+  headword: string
+  reading: string | null
+  user_translation: string | null
+  note: string | null
+  added_at: string
+  contexts: (WordContext & { created_at: string })[]
+}
+
+export interface WordsPage {
+  items: UserWord[]
+  total: number
 }
 
 export interface Chapter {
@@ -114,6 +139,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(error?.kind ?? `http_${response.status}`, error?.message ?? '')
   }
 
+  // 204 приходит без тела — на DELETE это норма, а не сбой разбора.
+  if (response.status === 204) return undefined as T
+
   return (await response.json()) as T
 }
 
@@ -136,6 +164,33 @@ export const api = {
   /** Значения слова из локальных словарей: без интернета и без задержки. */
   lookup: (word: string, lang = 'zh') =>
     request<Lookup>(`/lookup?word=${encodeURIComponent(word)}&lang=${lang}`),
+
+  /**
+   * Сохранить слово с контекстом. Это же и правка границ: с этого момента
+   * сегментатор режет слово целиком (T2.7).
+   */
+  saveWord: (body: {
+    headword: string
+    lang?: string
+    reading?: string | null
+    user_translation?: string | null
+    note?: string | null
+    context?: WordContext
+  }) => request<UserWord>('/words', { method: 'POST', body: JSON.stringify(body) }),
+
+  listWords: (params: { query?: string; limit?: number; offset?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (params.query) search.set('query', params.query)
+    if (params.limit) search.set('limit', String(params.limit))
+    if (params.offset) search.set('offset', String(params.offset))
+    const tail = search.toString()
+    return request<WordsPage>(`/words${tail ? `?${tail}` : ''}`)
+  },
+
+  updateWord: (id: number, body: { reading?: string; user_translation?: string; note?: string }) =>
+    request<UserWord>(`/words/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+
+  deleteWord: (id: number) => request<void>(`/words/${id}`, { method: 'DELETE' }),
 }
 
 /** Глава читаема начиная с `segmented`: текст и токены уже есть. */

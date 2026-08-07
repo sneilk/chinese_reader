@@ -23,7 +23,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import DictEntry
+from app.db.models import DictEntry, UserWord
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +42,12 @@ MAX_USERDICT_LEN = 4
 # перетягивают на себя. Значение низкое намеренно — статья CC-CEDICT говорит
 # «такое слово бывает», а не «оно частое».
 CEDICT_FREQ = 3
+
+# Частота для слов читателя. Заведомо высокая: он поправил границы руками,
+# значит хочет видеть это слово целиком, а не бороться со статистикой.
+USER_FREQ = 10_000
+# Имена героев бывают длиннее словарных заголовков, поэтому свой потолок.
+MAX_USER_WORD_LEN = 8
 
 
 class TokenKind(enum.StrEnum):
@@ -90,6 +96,10 @@ def build_userdict(session: Session, path: Path) -> int:
 
     Ровно это и советует segmentation.md §2: частота из штатного словаря там,
     где слово известно; низкая базовая — только для остальных.
+
+    Слова читателя — исключение из этого правила: они идут в файл всегда и с
+    заведомо высокой частотой, даже если jieba такое слово знает. Он выделил
+    его руками, поправив границы (§5), и его решение важнее статистики.
     """
     import jieba
 
@@ -110,8 +120,53 @@ def build_userdict(session: Session, path: Path) -> int:
             seen.add(hw)
             fh.write(f"{hw} {CEDICT_FREQ}\n")
             written += 1
+
+        # Слова читателя пишутся последними: при равных заголовках побеждает
+        # последняя строка файла, и это должна быть его частота, а не наша.
+        for hw in session.execute(select(UserWord.headword).distinct()).scalars():
+            if not is_teachable(hw):
+                continue
+            fh.write(f"{hw} {USER_FREQ}\n")
+            written += 1
+
     log.info("userdict: %s слов -> %s", written, path)
     return written
+
+
+def is_teachable(headword: str) -> bool:
+    """Годится ли слово в userdict.
+
+    Односимвольные не нужны: jieba и так режет по одному знаку, когда не
+    находит слова. Латиница и цифры сегментатору китайского тоже ни к чему.
+    """
+    return bool(_HAN_RE.match(headword)) and MIN_USERDICT_LEN <= len(headword) <= MAX_USER_WORD_LEN
+
+
+def teach_word(segmenter: Segmenter | None, path: Path | None, headword: str) -> bool:
+    """Научить сегментатор слову читателя. Возвращает «слово принято».
+
+    Двумя путями сразу, и оба нужны. Живой экземпляр правится в памяти —
+    иначе следующая глава в этом же процессе резалась бы по-старому. Файл
+    дописывается — иначе правка не пережила бы перезапуск сервиса.
+
+    Источник правды при этом — таблица `user_words`: файл пересобирается из
+    неё целиком (`build_userdict`), а дописывание строки — лишь способ не
+    перечитывать двадцать семь тысяч строк ради одного слова.
+    """
+    headword = headword.strip()
+    if not is_teachable(headword):
+        return False
+
+    if segmenter is not None:
+        segmenter.add_word(headword, freq=USER_FREQ)
+
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(f"{headword} {USER_FREQ}\n")
+
+    log.info("сегментатор научен слову %s", headword)
+    return True
 
 
 class Segmenter:
