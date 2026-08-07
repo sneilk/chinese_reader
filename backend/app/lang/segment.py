@@ -17,6 +17,7 @@ import enum
 import json
 import logging
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,6 +49,11 @@ CEDICT_FREQ = 3
 USER_FREQ = 10_000
 # Имена героев бывают длиннее словарных заголовков, поэтому свой потолок.
 MAX_USER_WORD_LEN = 8
+
+# Источники, годные для резки. CC-CEDICT — словарь употребимых слов, и его
+# заголовки согласуют сегментатор со словарём. БКРС сюда не входит: он полон
+# редких сочетаний, и в userdict превращает текст в труху (см. build_userdict).
+SEGMENTATION_SOURCES: tuple[str, ...] = ("cedict",)
 
 
 class TokenKind(enum.StrEnum):
@@ -85,7 +91,11 @@ def classify(surface: str) -> TokenKind:
     return TokenKind.PUNCT
 
 
-def build_userdict(session: Session, path: Path) -> int:
+def build_userdict(
+    session: Session,
+    path: Path,
+    sources: Sequence[str] = SEGMENTATION_SOURCES,
+) -> int:
     """Выгрузить заголовки словаря в файл userdict для jieba.
 
     В файл идут только слова, которых у jieba нет. Причина — `load_userdict`
@@ -100,6 +110,14 @@ def build_userdict(session: Session, path: Path) -> int:
     Слова читателя — исключение из этого правила: они идут в файл всегда и с
     заведомо высокой частотой, даже если jieba такое слово знает. Он выделил
     его руками, поправив границы (§5), и его решение важнее статистики.
+
+    **В сегментацию идут не все источники.** Большой словарь (БКРС) содержит
+    почти любое двух-четырёхзначное сочетание, и залив его сюда с базовой
+    частотой, мы рассыпаем текст: замерено на золотом наборе — 23 предложения
+    из 25 меняют разметку, `天黑得像几百年` превращается в `天|黑得像几|百年没擦`.
+    Причина в том, что это разные задачи: словарь нужен **карточке**, а
+    userdict — **резке**, и согласовывать их (segmentation.md §2) значит брать
+    оттуда слова, а не всё подряд.
     """
     import jieba
 
@@ -107,7 +125,9 @@ def build_userdict(session: Session, path: Path) -> int:
     known = jieba.dt.FREQ
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    rows = session.execute(select(DictEntry.headword).distinct()).scalars()
+    rows = session.execute(
+        select(DictEntry.headword).distinct().where(DictEntry.source.in_(sources))
+    ).scalars()
 
     written = 0
     seen: set[str] = set()

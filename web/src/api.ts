@@ -66,6 +66,24 @@ export interface WordsPage {
   total: number
 }
 
+/** Состояние сервиса. Ключей и адресов здесь нет — только факт настройки. */
+export interface Diagnostics {
+  version: string
+  schema_revision: string | null
+  db_size_bytes: number
+  chapters: number
+  sentences: number
+  user_words: number
+  dict_entries: number
+  dict_sources: Record<string, number>
+  userdict_words: number
+  translator_configured: boolean
+  chars_this_month: number
+  month_limit: number
+  browser_profile_exists: boolean
+  browser_headless: boolean
+}
+
 export interface Chapter {
   id: number
   url: string
@@ -191,6 +209,9 @@ export const api = {
     request<UserWord>(`/words/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
 
   deleteWord: (id: number) => request<void>(`/words/${id}`, { method: 'DELETE' }),
+
+  /** Состояние сервиса: что настроено, а что нет. */
+  diagnostics: () => request<Diagnostics>('/diagnostics'),
 }
 
 /** Глава читаема начиная с `segmented`: текст и токены уже есть. */

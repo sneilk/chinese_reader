@@ -18,6 +18,9 @@ from app.main import app
 from app.services.words import ContextInput, WordError, save_word
 
 SENTENCE = "他站起来走到窗户旁边，看见外面下着大雨。"
+WORD = "窗户"
+# Офсеты контекста обязаны резать предложение обратно в само слово.
+WORD_AT = SENTENCE.index(WORD)
 
 
 @pytest.fixture
@@ -64,8 +67,8 @@ def chapter(session) -> Chapter:
 def _context(chapter: Chapter | None = None) -> ContextInput:
     return ContextInput(
         sentence=SENTENCE,
-        offset_start=0,
-        offset_end=3,
+        offset_start=WORD_AT,
+        offset_end=WORD_AT + len(WORD),
         chapter_id=chapter.id if chapter else None,
         sentence_id=chapter.sentences[0].id if chapter else None,
     )
@@ -87,7 +90,7 @@ def test_saves_word_with_context(session, chapter):
 def test_second_save_adds_context_not_duplicate(session, chapter):
     """Имя героя встречается сотнями раз — карточка должна остаться одна."""
     save_word(session, headword="窗户", context=_context(chapter))
-    other = ContextInput(sentence="另一个句子在这里出现。", offset_start=0, offset_end=3)
+    other = ContextInput(sentence="窗户在另一个句子里出现。", offset_start=0, offset_end=2)
     word, created = save_word(session, headword="窗户", context=other)
 
     assert not created
@@ -155,9 +158,32 @@ def test_broken_offsets_rejected(session, context):
         save_word(session, headword="窗户", context=context)
 
 
+def test_offsets_must_cut_the_word(session):
+    """Сдвиг на одно слово сохранился бы молча и всплыл в карточке через месяц.
+
+    Выглядело бы это как ошибка разметки главы, а не как испорченная запись, —
+    и чинили бы не то.
+    """
+    shifted = ContextInput(sentence=SENTENCE, offset_start=0, offset_end=len(WORD))
+    with pytest.raises(WordError, match="офсеты режут"):
+        save_word(session, headword=WORD, context=shifted)
+
+
 def test_empty_headword_rejected(session):
     with pytest.raises(WordError):
         save_word(session, headword="   ")
+
+
+def test_unknown_chapter_rejected(session):
+    """Иначе внешний ключ сработает внутри базы и наружу уйдёт пятисотка."""
+    context = ContextInput(
+        sentence=SENTENCE,
+        offset_start=WORD_AT,
+        offset_end=WORD_AT + len(WORD),
+        chapter_id=999,
+    )
+    with pytest.raises(WordError, match="главы 999 нет"):
+        save_word(session, headword=WORD, context=context)
 
 
 # --- ручки ---
@@ -171,8 +197,8 @@ def test_api_create_and_list(client, chapter):
             "reading": "chuāng hu",
             "context": {
                 "sentence": SENTENCE,
-                "offset_start": 0,
-                "offset_end": 3,
+                "offset_start": WORD_AT,
+                "offset_end": WORD_AT + len(WORD),
                 "chapter_id": chapter.id,
             },
         },

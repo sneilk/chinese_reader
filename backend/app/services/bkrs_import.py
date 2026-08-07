@@ -67,6 +67,22 @@ _PINYIN = re.compile(r"^[a-zA-ZüÜāáǎàēéěèīíǐìōóǒòūúǔùǖǘ�
 
 _HAN = re.compile(r"[一-鿿]")
 
+# Заголовок длиннее — это фраза или пословица, карточке она не нужна.
+# Потолок выше словарного (4) намеренно: столько же, сколько у слов читателя.
+MAX_HEADWORD_LEN = 8
+
+# Директивы шапки DSL. Проверяем по списку, а не по одной решётке: заголовок
+# статьи тоже может начинаться с неё, и тогда он пропал бы молча, а его тело
+# приклеилось бы к предыдущей карточке.
+_DIRECTIVES = (
+    "#NAME",
+    "#INDEX_LANGUAGE",
+    "#CONTENTS_LANGUAGE",
+    "#SOURCE_CODE_PAGE",
+    "#ICON_FILE",
+    "#INCLUDE",
+)
+
 
 @dataclass
 class BkrsEntry:
@@ -126,7 +142,7 @@ def parse_dsl(lines: Iterable[str]) -> Iterator[BkrsEntry]:
 
     for raw in lines:
         line = raw.rstrip("\n\r")
-        if not line.strip() or line.startswith("#"):
+        if not line.strip() or line.startswith(_DIRECTIVES):
             continue
 
         if line[0] in " \t":
@@ -174,6 +190,31 @@ def download(dest: Path, date: str) -> Path:
     return dest
 
 
+def usable_headwords(entry: BkrsEntry) -> Iterator[str]:
+    """Отобрать заголовки, годные для словаря.
+
+    Дамп содержит и служебные строки, и целые фразы. Латиница без иероглифов
+    в китайском словаре бесполезна, длинные фразы карточке не нужны, а
+    повторы внутри одной карточки дали бы одинаковые строки в базе.
+    """
+    seen: set[str] = set()
+    for headword in entry.headwords:
+        if headword in seen or len(headword) > MAX_HEADWORD_LEN or not _HAN.search(headword):
+            continue
+        seen.add(headword)
+        yield headword
+
+
+def _open(path: Path):
+    """Открыть дамп, распакованный или как есть в `.gz`.
+
+    `utf-8-sig` — не педантизм: BOM приклеился бы к `#NAME`, строка перестала
+    бы начинаться с решётки и разобралась бы как заголовок статьи.
+    """
+    opener = gzip.open if path.suffix == ".gz" else open
+    return opener(path, "rt", encoding="utf-8-sig")
+
+
 def import_file(session: Session, path: Path, *, batch: int = 5000) -> int:
     """Залить дамп в dict_entries, заменив прошлый импорт того же источника."""
     session.execute(delete(DictEntry).where(DictEntry.source == SOURCE))
@@ -181,10 +222,10 @@ def import_file(session: Session, path: Path, *, batch: int = 5000) -> int:
 
     total = 0
     buf: list[dict] = []
-    with path.open(encoding="utf-8") as fh:
+    with _open(path) as fh:
         for entry in parse_dsl(fh):
             senses = json.dumps(entry.senses, ensure_ascii=False)
-            for headword in entry.headwords:
+            for headword in usable_headwords(entry):
                 buf.append(
                     {
                         "lang": "zh",

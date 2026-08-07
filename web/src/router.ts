@@ -13,6 +13,7 @@ export type Route =
   | { name: 'input' }
   | { name: 'chapter'; id: number }
   | { name: 'words' }
+  | { name: 'diagnostics' }
 
 export function parseRoute(hash: string): Route {
   const path = hash.replace(/^#\/?/, '')
@@ -23,6 +24,7 @@ export function parseRoute(hash: string): Route {
     if (Number.isInteger(id) && id > 0) return { name: 'chapter', id }
   }
   if (head === 'words') return { name: 'words' }
+  if (head === 'diagnostics') return { name: 'diagnostics' }
   return { name: 'input' }
 }
 
@@ -32,6 +34,8 @@ export function hrefFor(route: Route): string {
       return `#/chapter/${route.id}`
     case 'words':
       return '#/words'
+    case 'diagnostics':
+      return '#/diagnostics'
     default:
       return '#/'
   }

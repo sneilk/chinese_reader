@@ -80,6 +80,25 @@ class LookupOut(BaseModel):
     chars: list[CharGlossOut] = []
 
 
+class DiagnosticsOut(BaseModel):
+    """Состояние сервиса. Ключей и адресов здесь нет — только факт настройки."""
+
+    version: str
+    schema_revision: str | None = None
+    db_size_bytes: int
+    chapters: int
+    sentences: int
+    user_words: int
+    dict_entries: int
+    dict_sources: dict[str, int] = {}
+    userdict_words: int
+    translator_configured: bool
+    chars_this_month: int
+    month_limit: int
+    browser_profile_exists: bool
+    browser_headless: bool
+
+
 class ContextIn(BaseModel):
     """Предложение, в котором слово встретилось, вместе с офсетами внутри него."""
 

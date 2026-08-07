@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.chapters import router as chapters_router
+from app.api.diagnostics import router as diagnostics_router
 from app.api.health import router as health_router
 from app.api.lookup import router as lookup_router
 from app.api.words import router as words_router
@@ -21,6 +22,11 @@ from app.lang.segment import Segmenter
 from app.providers.translate import YandexTranslate
 
 log = logging.getLogger(__name__)
+
+# Логи уходят в stdout, а под systemd — прямо в journald, который сам
+# проставляет время и имя юнита. Дублировать их в формате значит читать
+# каждую строку дважды. Секретов в логах нет: ключ и куки не пишутся нигде.
+logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 
 
 @asynccontextmanager
@@ -87,6 +93,7 @@ async def _validation_error(_request: Request, exc: RequestValidationError) -> J
 
 
 app.include_router(health_router, prefix="/api")
+app.include_router(diagnostics_router, prefix="/api")
 app.include_router(chapters_router, prefix="/api")
 app.include_router(lookup_router, prefix="/api")
 app.include_router(words_router, prefix="/api")

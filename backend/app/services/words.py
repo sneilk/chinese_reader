@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.db.models import Context, UserWord
+from app.db.models import Chapter, Context, Sentence, UserWord
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +51,26 @@ def _validate(headword: str, context: ContextInput | None) -> None:
     if context.offset_end > len(context.sentence):
         raise WordError("офсеты контекста выходят за предложение")
 
+    # Офсеты обязаны резать предложение обратно в само слово. Без этой
+    # проверки сдвиг на единицу сохраняется молча, а всплывает через месяц
+    # в карточке, где подсвечено соседнее слово — и выглядит как ошибка
+    # разметки главы, а не как испорченная запись.
+    cut = context.sentence[context.offset_start : context.offset_end]
+    if cut != headword.strip():
+        raise WordError(f"офсеты режут {cut!r}, а слово — {headword!r}")
+
+
+def _check_links(session: Session, context: ContextInput) -> None:
+    """Проверить ссылки на главу и предложение до вставки.
+
+    Иначе внешний ключ сработает уже внутри базы, и наружу уйдёт пятисотка с
+    текстом SQLAlchemy вместо внятного отказа.
+    """
+    if context.chapter_id is not None and session.get(Chapter, context.chapter_id) is None:
+        raise WordError(f"главы {context.chapter_id} нет")
+    if context.sentence_id is not None and session.get(Sentence, context.sentence_id) is None:
+        raise WordError(f"предложения {context.sentence_id} нет")
+
 
 def save_word(
     session: Session,
@@ -65,6 +85,9 @@ def save_word(
     """Сохранить слово. Второе значение — «завели сейчас», а не дополнили."""
     headword = headword.strip()
     _validate(headword, context)
+
+    if context is not None:
+        _check_links(session, context)
 
     word = session.scalars(
         select(UserWord).where(UserWord.lang == lang, UserWord.headword == headword)

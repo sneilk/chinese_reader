@@ -594,6 +594,44 @@ a {
   color: var(--danger);
 }
 
+/* --- состояние сервиса --- */
+
+.checks {
+  list-style: none;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+}
+
+.check {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.check__mark {
+  flex: none;
+  width: 1.4em;
+  text-align: center;
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.check--bad .check__mark {
+  color: var(--warning);
+}
+
+.check__advice {
+  margin-top: var(--space-1);
+  color: var(--warning);
+  font-size: 0.9rem;
+}
+
+.check__footer {
+  font-size: 0.9rem;
+}
+
 @media (max-width: 480px) {
   :root {
     --reader-size: 24px;

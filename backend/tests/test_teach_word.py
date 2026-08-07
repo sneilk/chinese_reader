@@ -9,6 +9,9 @@
 张 и 仙姑, и это ровно тот случай, ради которого §5 segmentation.md и написан.
 """
 
+import re
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -107,6 +110,66 @@ def test_user_word_wins_over_dictionary_entry(factory, tmp_path):
     lines = path.read_text(encoding="utf-8").splitlines()
     assert lines == [f"{NAME} {CEDICT_FREQ}", f"{NAME} {USER_FREQ}"]
     assert NAME in surfaces(Segmenter(path))
+
+
+def test_big_dictionary_does_not_reach_userdict(factory, tmp_path):
+    """Словарь для карточки и словарь для резки — разные вещи.
+
+    БКРС содержит почти любое сочетание из двух-четырёх знаков. Попади его
+    заголовки в userdict с базовой частотой, текст рассыпается на куски:
+    замерено на золотом наборе — 23 предложения из 25 меняют разметку. Здесь
+    проверяется, что источник в userdict не попадает вовсе.
+    """
+    with factory() as session:
+        session.add_all(
+            [
+                # jieba этого слова не знает, поэтому оно в файл попадёт.
+                DictEntry(headword="短命鬼", senses_json="[]", source="cedict"),
+                DictEntry(headword="黑得像几", senses_json="[]", source="bkrs"),
+                DictEntry(headword="百年没擦", senses_json="[]", source="bkrs"),
+            ]
+        )
+        session.commit()
+        path = tmp_path / "userdict.txt"
+        build_userdict(session, path)
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert lines == [f"短命鬼 {CEDICT_FREQ}"]
+
+
+def test_golden_set_survives_dictionary_import(factory, tmp_path):
+    """Регресс-барьер: импорт словаря не должен менять разметку главы.
+
+    Если он её меняет, читателю это видно как «ридер стал хуже резать», и
+    искать причину он будет в сегментаторе, а не в импортёре словаря.
+    """
+    golden = (Path(__file__).parent / "data" / "segment-golden.txt").read_text(encoding="utf-8")
+    lines = golden.splitlines()
+
+    with factory() as session:
+        # Большой словарь приносит все мыслимые сочетания из текста главы.
+        han = re.compile(r"^[一-鿿]+$")
+        for line in lines:
+            text = line.replace("|", "")
+            for n in (2, 3, 4):
+                for i in range(len(text) - n + 1):
+                    piece = text[i : i + n]
+                    if han.match(piece):
+                        session.add(DictEntry(headword=piece, senses_json="[]", source="bkrs"))
+        session.commit()
+
+        path = tmp_path / "userdict.txt"
+        build_userdict(session, path)
+
+    # Файл достраиваем поверх боевой вырезки — так же, как в бою.
+    base = (Path(__file__).parent / "data" / "segment-userdict.txt").read_text(encoding="utf-8")
+    merged = tmp_path / "merged.txt"
+    merged.write_text(base + path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    segmenter = Segmenter(merged)
+    for line in lines:
+        text = line.replace("|", "")
+        assert "|".join(t.surface for t in segmenter.segment(text)) == line, text
 
 
 # --- через API ---

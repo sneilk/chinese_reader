@@ -1,0 +1,72 @@
+"""Состояние сервиса: `GET /api/diagnostics` (T2.10).
+
+Отвечает на один вопрос — «что чинить». Сообщения по `error_kind` объясняют
+отказ конкретной главы, но половина настоящих поломок ими не видна: словарь
+не импортирован, ключ переводчика не задан, профиль браузера потерян после
+пересоздания машины. Всё это выглядит одинаково — «не работает», — а чинится
+по-разному.
+
+Секретов здесь нет и быть не должно: только «ключ задан» или «не задан», без
+самого ключа и без адресов.
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter
+from sqlalchemy import func, select
+
+from app.api.deps import SessionDep
+from app.api.schemas import DiagnosticsOut
+from app.config import settings
+from app.db.models import Chapter, DictEntry, Sentence, UserWord
+from app.services.budget import chars_this_month
+
+router = APIRouter(tags=["diagnostics"])
+
+
+def _count(session: SessionDep, model) -> int:
+    return int(session.scalar(select(func.count()).select_from(model)) or 0)
+
+
+@router.get("/diagnostics", response_model=DiagnosticsOut)
+def read_diagnostics(session: SessionDep) -> DiagnosticsOut:
+    by_source = dict(
+        session.execute(select(DictEntry.source, func.count()).group_by(DictEntry.source)).all()
+    )
+
+    userdict = settings.userdict_path
+    db_path = settings.db_path
+
+    return DiagnosticsOut(
+        version="0.1.0",
+        schema_revision=_schema_revision(session),
+        db_size_bytes=db_path.stat().st_size if db_path.exists() else 0,
+        chapters=_count(session, Chapter),
+        sentences=_count(session, Sentence),
+        user_words=_count(session, UserWord),
+        dict_entries=sum(by_source.values()),
+        dict_sources={str(k): int(v) for k, v in by_source.items()},
+        userdict_words=sum(1 for _ in userdict.open(encoding="utf-8")) if userdict.exists() else 0,
+        translator_configured=bool(settings.yc_translate_api_key and settings.yc_folder_id),
+        chars_this_month=chars_this_month(session),
+        month_limit=settings.translate_max_chars_per_month,
+        browser_profile_exists=settings.browser_profile_dir.exists(),
+        browser_headless=settings.browser_headless,
+    )
+
+
+def _schema_revision(session: SessionDep) -> str | None:
+    """Версия схемы из таблицы alembic. `None`, если миграции не накатывались.
+
+    Отсутствие таблицы — не ошибка, а диагноз: база создана в обход миграций.
+    Падать здесь нельзя, ручку зовут как раз тогда, когда что-то не так.
+    """
+    from sqlalchemy import Column, MetaData, String, Table
+    from sqlalchemy.exc import DatabaseError
+
+    table = Table("alembic_version", MetaData(), Column("version_num", String))
+    try:
+        return session.scalar(select(func.max(table.c.version_num)))
+    except DatabaseError:
+        session.rollback()
+        return None

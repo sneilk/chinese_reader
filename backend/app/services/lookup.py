@@ -87,7 +87,12 @@ def _entries_for(session: Session, word: str, lang: str) -> list[Entry]:
         select(DictEntry).where(DictEntry.lang == lang, DictEntry.headword == word)
     ).all()
     ordered = sorted(rows, key=lambda r: SOURCE_ORDER.get(r.source, _UNKNOWN_SOURCE))
-    return [_to_entry(row) for row in ordered]
+    entries = [_to_entry(row) for row in ordered]
+
+    # Статья без значений показывать нечего, но она объявляет слово найденным:
+    # встанет первой по порядку источников, отключит фолбэк по знакам — и
+    # читатель получит пустую карточку вместо разбора имени героя.
+    return [e for e in entries if e.senses]
 
 
 def lookup(session: Session, word: str, lang: str = "zh") -> LookupResult:

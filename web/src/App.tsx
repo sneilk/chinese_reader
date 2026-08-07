@@ -6,6 +6,7 @@
  */
 
 import { hrefFor, useRoute, type Route } from './router'
+import { DiagnosticsScreen } from './screens/DiagnosticsScreen'
 import { InputScreen } from './screens/InputScreen'
 import { ReaderScreen } from './screens/ReaderScreen'
 import { WordsScreen } from './screens/WordsScreen'
@@ -46,12 +47,16 @@ export default function App() {
         <NavLink route={{ name: 'words' }} active={route.name === 'words'}>
           Словарь
         </NavLink>
+        <NavLink route={{ name: 'diagnostics' }} active={route.name === 'diagnostics'}>
+          Состояние
+        </NavLink>
       </header>
 
       <main className={`content${reading ? ' content--reader' : ''}`}>
         {route.name === 'input' && <InputScreen />}
         {route.name === 'chapter' && <ReaderScreen id={route.id} />}
         {route.name === 'words' && <WordsScreen />}
+        {route.name === 'diagnostics' && <DiagnosticsScreen />}
       </main>
     </div>
   )
