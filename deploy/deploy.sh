@@ -12,7 +12,10 @@
 # восстанавливается из репозитория.
 set -euo pipefail
 
-TARGET="${1:-yc-user@89.169.158.177}"
+# Адрес машины в репозиторий не пишем: он меняется при пересоздании ВМ, а
+# главное — публичный git не место для адреса хоста с открытым SSH. Берём из
+# переменной окружения или аргументом.
+TARGET="${1:-${CHINESE_READER_HOST:?укажите адрес: deploy/deploy.sh user@host или CHINESE_READER_HOST=user@host}}"
 APP_DIR=/opt/chinese-reader
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

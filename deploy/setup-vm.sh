@@ -11,7 +11,7 @@
 # `sudo cat /etc/chinese-reader/webauth`.
 set -euo pipefail
 
-DOMAIN="${1:?нужен домен, например 89-169-158-177.sslip.io}"
+DOMAIN="${1:?нужен домен, например 203-0-113-10.sslip.io}"
 APP_DIR=/opt/chinese-reader
 APP_USER=yc-user
 SECRET_DIR=/etc/chinese-reader
