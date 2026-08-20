@@ -1,11 +1,18 @@
 /**
- * Жесты по тексту главы: тап — слово, протяжка — фраза, долгий тап — символ.
+ * Жесты по тексту главы: тап — подсветка, удержание — подсказка с переводом,
+ * двойной тап — подробная панель, протяжка — фраза.
+ *
+ * Два уровня ответа вместо одного — осознанно. Раньше любое касание распахивало
+ * панель на треть экрана, и чтение прерывалось на каждом незнакомом слове.
+ * Теперь дешёвый жест даёт дешёвый ответ: подсказка живёт, пока палец на
+ * экране, и не двигает текст. Всё остальное — перевод предложения, статьи из
+ * обоих словарей, кнопка в словарь — стоит второго касания.
  *
  * Слушатели вешаются нативно и один раз на весь контейнер (делегирование):
  * спанов около 2500, и обработчик на каждом — это и память, и лишняя работа
  * при перерисовке.
  *
- * Три вещи здесь неочевидны, и каждая ломает жесты по-своему:
+ * Четыре вещи здесь неочевидны, и каждая ломает жесты по-своему:
  *
  * 1. **`e.target` во время протяжки пальцем залипает на стартовом спане** —
  *    браузер неявно захватывает указатель. Поэтому «на каком токене палец
@@ -15,6 +22,10 @@
  *    `{ passive: false }`.
  * 3. **Признак «жест превратился в прокрутку» — `pointercancel`**, а не своя
  *    эвристика по смещению: браузер решает это раньше и точнее нас.
+ * 4. **Двойной тап не ждёт своего окна.** Обычно распознавание двойного
+ *    касания стоит 300 мс задержки на одиночном. Здесь не стоит: первый тап
+ *    только подсвечивает, подсветка обратима — значит её применяем сразу, а
+ *    второе касание уже поверх неё открывает панель.
  *
  * Вертикальную прокрутку не трогаем вовсе — она отдана браузеру через
  * `touch-action: pan-y` (см. index.css). Протяжка расширяет выделение, пока
@@ -28,16 +39,24 @@ import type { ChapterIndex } from './tokens'
 /** Порог «палец дрогнул» против «пользователь тянет». Для мыши он мельче. */
 const SLOP_TOUCH = 10
 const SLOP_MOUSE = 3
-/** Долгий тап. 500 мс — системная величина и на iOS, и на Android. */
+/** Долгое нажатие. 500 мс — системная величина и на iOS, и на Android. */
 const LONG_PRESS_MS = 500
+/** Окно двойного тапа. 300 мс — столько же держат браузеры перед `dblclick`. */
+const DOUBLE_TAP_MS = 300
 
 export interface GestureCallbacks {
-  /** Тап: выделить токен целиком. */
+  /** Тап: выделить токен и ничего не открывать. */
   onTap(tokenIndex: number): void
+  /** Двойной тап по тому же токену: раскрыть подробную панель. */
+  onOpen(tokenIndex: number): void
   /** Протяжка: расширить выделение до токена под пальцем. */
   onExtend(anchorIndex: number, focusIndex: number): void
-  /** Долгий тап: сузить до одного символа. `charOffset` — в единицах JS-строки. */
-  onCharacter(tokenIndex: number, charOffset: number): void
+  /** Протяжка окончена: показать панель по собранной фразе. */
+  onExtendEnd(): void
+  /** Удержание: подсказка с переводом токена, у точки касания. */
+  onPeek(tokenIndex: number, x: number, y: number): void
+  /** Палец отпущен — подсказку убрать. */
+  onPeekEnd(): void
   /** Клавиатура: сдвинуть выделение на соседний токен. */
   onStep(direction: -1 | 1): void
 }
@@ -49,7 +68,7 @@ interface Gesture {
   y: number
   slop: number
   dragging: boolean
-  longPressed: boolean
+  peeking: boolean
   timer: number
 }
 
@@ -59,32 +78,6 @@ function tokenAtPoint(x: number, y: number): number | null {
   if (!holder) return null
   const index = Number(holder.dataset.i)
   return Number.isInteger(index) ? index : null
-}
-
-/**
- * Смещение символа под точкой — внутри текста главы.
- *
- * Спрашиваем у браузера позицию каретки: она попадает в символ точнее, чем
- * деление ширины спана на число знаков, и не ломается на переносе строки.
- */
-function charOffsetAtPoint(x: number, y: number, start: number, end: number): number {
-  const doc = document as Document & {
-    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
-    caretRangeFromPoint?: (x: number, y: number) => Range | null
-  }
-
-  let offsetInNode: number | null = null
-  if (typeof doc.caretPositionFromPoint === 'function') {
-    offsetInNode = doc.caretPositionFromPoint(x, y)?.offset ?? null
-  } else if (typeof doc.caretRangeFromPoint === 'function') {
-    offsetInNode = doc.caretRangeFromPoint(x, y)?.startOffset ?? null
-  }
-  if (offsetInNode === null) return start
-
-  // Каретка стоит между символами; берём тот, что слева от неё, но не выходя
-  // за границы самого токена.
-  const absolute = start + offsetInNode
-  return Math.min(Math.max(absolute, start), end - 1)
 }
 
 export function useTokenGestures(
@@ -100,15 +93,23 @@ export function useTokenGestures(
   const latest = useRef(callbacks)
   latest.current = callbacks
 
+  // index в зависимостях, хотя в теле не используется: смена главы обязана
+  // обнулить и незакрытый жест, и память о первом касании двойного тапа.
   useEffect(() => {
     const node = ref.current
     if (!node) return
 
     let gesture: Gesture | null = null
+    let lastTap: { tokenIndex: number; at: number } | null = null
 
     const clear = () => {
       if (gesture) clearTimeout(gesture.timer)
       gesture = null
+    }
+
+    /** Убрать подсказку, если она была показана этим жестом. */
+    const endPeek = () => {
+      if (gesture?.peeking) latest.current.onPeekEnd()
     }
 
     const onPointerDown = (e: PointerEvent) => {
@@ -117,7 +118,6 @@ export function useTokenGestures(
       if (tokenIndex === null) return
 
       const { clientX: x, clientY: y } = e
-      const token = index.tokens[tokenIndex]
 
       gesture = {
         pointerId: e.pointerId,
@@ -126,11 +126,15 @@ export function useTokenGestures(
         y,
         slop: e.pointerType === 'mouse' ? SLOP_MOUSE : SLOP_TOUCH,
         dragging: false,
-        longPressed: false,
+        peeking: false,
         timer: window.setTimeout(() => {
           if (!gesture || gesture.dragging) return
-          gesture.longPressed = true
-          latest.current.onCharacter(tokenIndex, charOffsetAtPoint(x, y, token.start, token.end))
+          gesture.peeking = true
+          // Удержание — самостоятельный жест, а не затянувшийся тап. Без этой
+          // строки отпускание пальца засчиталось бы первым касанием двойного,
+          // и следующий обычный тап неожиданно распахнул бы панель.
+          lastTap = null
+          latest.current.onPeek(tokenIndex, x, y)
         }, LONG_PRESS_MS),
       }
     }
@@ -142,11 +146,12 @@ export function useTokenGestures(
       const dy = Math.abs(e.clientY - gesture.y)
       if (!gesture.dragging && Math.hypot(dx, dy) < gesture.slop) return
 
-      // Палец поехал — это уже не долгий тап.
+      // Палец поехал — это уже не удержание.
       clearTimeout(gesture.timer)
-      if (gesture.longPressed) return
+      if (gesture.peeking) return
 
       gesture.dragging = true
+      lastTap = null
       // Иначе браузер начнёт своё выделение текста поверх нашего.
       if (e.cancelable) e.preventDefault()
 
@@ -156,13 +161,36 @@ export function useTokenGestures(
 
     const onPointerUp = (e: PointerEvent) => {
       if (!gesture || e.pointerId !== gesture.pointerId) return
-      const { tokenIndex, dragging, longPressed } = gesture
+      const { tokenIndex, dragging, peeking } = gesture
+      endPeek()
       clear()
-      if (!dragging && !longPressed) latest.current.onTap(tokenIndex)
+
+      if (peeking) return
+      if (dragging) {
+        latest.current.onExtendEnd()
+        return
+      }
+
+      // Двойной тап требует того же токена, а не просто соседней точки:
+      // «дважды по тому слову, что подсветилось» — правило, которое читатель
+      // может держать в голове, а «дважды в пределах 20 пикселей» — нет.
+      const now = performance.now()
+      if (lastTap && lastTap.tokenIndex === tokenIndex && now - lastTap.at <= DOUBLE_TAP_MS) {
+        lastTap = null
+        latest.current.onOpen(tokenIndex)
+        return
+      }
+
+      lastTap = { tokenIndex, at: now }
+      latest.current.onTap(tokenIndex)
     }
 
     // Прокрутка началась — браузер забрал жест себе, и это нормально.
-    const onPointerCancel = () => clear()
+    // Панель при этом не открываем: незавершённая протяжка ничего не выбрала.
+    const onPointerCancel = () => {
+      endPeek()
+      clear()
+    }
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowRight') {
@@ -182,6 +210,7 @@ export function useTokenGestures(
     node.addEventListener('keydown', onKeyDown)
 
     return () => {
+      endPeek()
       clear()
       node.removeEventListener('pointerdown', onPointerDown)
       node.removeEventListener('pointermove', onPointerMove)

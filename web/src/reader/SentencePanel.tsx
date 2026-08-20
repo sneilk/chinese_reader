@@ -14,9 +14,15 @@
  * Когда статьи на слово нет — а для имён героев это норма, — карточка
  * собирается из отдельных знаков и **помечается явно**: сумма значений знаков
  * не равна переводу слова, и выдавать одно за другое нельзя.
+ *
+ * Сужение до одного знака (segmentation.md §4) живёт здесь, а не в жестах:
+ * удержание теперь показывает слово целиком, и отдельного касания под разбор
+ * по знакам не осталось. Ряд знаков под заголовком честнее прежнего долгого
+ * тапа — он показывает, из чего слово состоит, ещё до того, как по нему попали.
  */
 
 import type { Lookup, Sentence } from '../api'
+import { splitChars } from './tokens'
 import type { Selected } from './useSelection'
 
 const GRANULARITY: Record<Selected['granularity'], string> = {
@@ -78,10 +84,47 @@ function CharGlosses({ lookup }: { lookup: Lookup }) {
   )
 }
 
+/**
+ * Ряд знаков выделенного слова: тап по знаку сужает карточку до него, тап по
+ * уже выбранному возвращает к слову целиком.
+ */
+function CharPicker({
+  token,
+  charOffset,
+  onNarrow,
+}: {
+  token: { text: string; start: number }
+  charOffset: number | null
+  onNarrow: (charOffset: number | null) => void
+}) {
+  return (
+    <div className="panel__chars" role="group" aria-label="Знаки слова">
+      {splitChars(token.text, token.start).map((piece) => {
+        const active = piece.start === charOffset
+        return (
+          <button
+            className={`panel__char${active ? ' is-selected' : ''}`}
+            key={piece.start}
+            type="button"
+            lang="zh-Hans"
+            aria-pressed={active}
+            onClick={() => onNarrow(active ? null : piece.start)}
+          >
+            {piece.text}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export function SentencePanel({
   selected,
   sentence,
   lookup,
+  token,
+  charOffset,
+  onNarrow,
   saveState,
   onSave,
   onClose,
@@ -89,11 +132,17 @@ export function SentencePanel({
   selected: Selected
   sentence: Sentence | null
   lookup: Lookup | null
+  /** Выделенный токен целиком — основа для разбора по знакам. */
+  token: { text: string; start: number } | null
+  charOffset: number | null
+  onNarrow: (charOffset: number | null) => void
   saveState: SaveState
   onSave: () => void
   onClose: () => void
 }) {
   const reading = lookup?.entries[0]?.reading
+  // Односложному слову разбирать нечего: ряд из одного знака только шумит.
+  const chars = token && splitChars(token.text, token.start).length > 1 ? token : null
 
   return (
     <aside className="panel" aria-live="polite">
@@ -113,6 +162,10 @@ export function SentencePanel({
             ✕
           </button>
         </div>
+
+        {chars && (
+          <CharPicker token={chars} charOffset={charOffset} onNarrow={onNarrow} />
+        )}
 
         <div className="panel__body">
           {sentence?.translation ? (

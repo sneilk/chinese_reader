@@ -1,13 +1,17 @@
 /**
- * Состояние выделения: что сейчас выбрано и чем это станет для карточки.
+ * Состояние выделения: что сейчас выбрано и насколько подробно это показано.
  *
  * Правила взаимодействия — segmentation.md §4: тап выделяет токен целиком,
- * протяжка расширяет выделение по границам токенов, долгий тап сужает до
- * одного символа. Расширение **не пересекает границу предложения**: иначе
+ * протяжка расширяет выделение по границам токенов, сужение до одного символа
+ * доступно в панели. Расширение **не пересекает границу предложения**: иначе
  * легко собрать бессвязный кусок из хвоста одной фразы и начала другой.
+ *
+ * Выделение и показ разведены намеренно. Выделить — дёшево и обратимо, поэтому
+ * это делает любой жест. Показать — либо подсказка у пальца (`peek`), либо
+ * панель на треть экрана (`panel`), и второе стоит отдельного двойного тапа.
  */
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import type { CharSplit, TokenRange } from './ChapterText'
 import type { ChapterIndex } from './tokens'
 import { clampToSentence, codePointLength, isSelectable } from './tokens'
@@ -22,6 +26,15 @@ export interface Selected {
   sentence: number
   granularity: 'token' | 'phrase' | 'char'
 }
+
+/** Что показано поверх текста. Координаты подсказки — в единицах вьюпорта. */
+export type ReaderView =
+  | { kind: 'none' }
+  | { kind: 'peek'; x: number; y: number }
+  | { kind: 'panel' }
+
+const HIDDEN: ReaderView = { kind: 'none' }
+const PANEL: ReaderView = { kind: 'panel' }
 
 /**
  * Контекст выделения для сохранения в словарь: предложение целиком и офсеты
@@ -49,9 +62,15 @@ export interface SelectionState {
   selection: TokenRange | null
   charSplit: CharSplit | null
   selected: Selected | null
+  view: ReaderView
   onTap(tokenIndex: number): void
+  onOpen(tokenIndex: number): void
   onExtend(anchorIndex: number, focusIndex: number): void
-  onCharacter(tokenIndex: number, charOffset: number): void
+  onExtendEnd(): void
+  onPeek(tokenIndex: number, x: number, y: number): void
+  onPeekEnd(): void
+  /** Сузить до символа внутри выделенного слова; `null` — вернуться к слову. */
+  onNarrow(charOffset: number | null): void
   onStep(direction: -1 | 1): void
   clear(): void
 }
@@ -59,55 +78,89 @@ export interface SelectionState {
 export function useSelection(index: ChapterIndex, content: string): SelectionState {
   const [selection, setSelection] = useState<TokenRange | null>(null)
   const [charSplit, setCharSplit] = useState<CharSplit | null>(null)
+  const [view, setView] = useState<ReaderView>(HIDDEN)
 
-  const onTap = useCallback(
-    (tokenIndex: number) => {
+  // Зеркало выделения для обработчиков. Читать его из состояния нельзя:
+  // `onExtendEnd` приходит из нативного слушателя, который подписан один раз
+  // на главу и видел бы `selection` таким, каким тот был при подписке.
+  const range = useRef<TokenRange | null>(null)
+  const put = useCallback((next: TokenRange | null) => {
+    range.current = next
+    setSelection(next)
+  }, [])
+
+  const select = useCallback(
+    (tokenIndex: number, next: ReaderView) => {
       const token = index.tokens[tokenIndex]
       if (!token || !isSelectable(token.kind)) return
       setCharSplit(null)
-      setSelection({ from: tokenIndex, to: tokenIndex })
+      put({ from: tokenIndex, to: tokenIndex })
+      setView(next)
     },
-    [index],
+    [index, put],
   )
+
+  const onTap = useCallback((tokenIndex: number) => select(tokenIndex, HIDDEN), [select])
+  const onOpen = useCallback((tokenIndex: number) => select(tokenIndex, PANEL), [select])
+
+  const onPeek = useCallback(
+    (tokenIndex: number, x: number, y: number) => select(tokenIndex, { kind: 'peek', x, y }),
+    [select],
+  )
+
+  const onPeekEnd = useCallback(() => {
+    // Подсветка остаётся: по ней видно, что именно только что смотрели, и
+    // двойной тап по тому же слову откроет панель уже прицельно.
+    setView((current) => (current.kind === 'peek' ? HIDDEN : current))
+  }, [])
 
   const onExtend = useCallback(
     (anchorIndex: number, focusIndex: number) => {
       const [from, to] = clampToSentence(index, anchorIndex, focusIndex)
       setCharSplit(null)
-      setSelection({ from, to })
+      put({ from, to })
+      setView(HIDDEN)
     },
-    [index],
+    [index, put],
   )
 
-  const onCharacter = useCallback(
-    (tokenIndex: number, charOffset: number) => {
-      const token = index.tokens[tokenIndex]
-      if (!token) return
-      setSelection({ from: tokenIndex, to: tokenIndex })
-      setCharSplit({ tokenIndex, charOffset })
-    },
-    [index],
-  )
+  const onExtendEnd = useCallback(() => {
+    // Панель открывает только настоящая фраза. Дрогнувший на одном токене
+    // палец — это тап, а тап теперь ничего не открывает: иначе порог в 10
+    // пикселей стал бы границей между «тихо» и «панель на треть экрана».
+    const current = range.current
+    if (current && current.from !== current.to) setView(PANEL)
+  }, [])
+
+  const onNarrow = useCallback((charOffset: number | null) => {
+    const current = range.current
+    if (!current) return
+    setCharSplit(charOffset === null ? null : { tokenIndex: current.from, charOffset })
+  }, [])
 
   /** Клавиатурный шаг: следующий выделяемый токен, не выходя за предложение. */
   const onStep = useCallback(
     (direction: -1 | 1) => {
-      setCharSplit(null)
-      setSelection((current) => {
-        const start = current ? (direction > 0 ? current.to : current.from) : -1
-        for (let i = start + direction; i >= 0 && i < index.tokens.length; i += direction) {
-          if (isSelectable(index.tokens[i].kind)) return { from: i, to: i }
-        }
-        return current
-      })
+      const current = range.current
+      const from = current ? (direction > 0 ? current.to : current.from) : -1
+      for (let i = from + direction; i >= 0 && i < index.tokens.length; i += direction) {
+        if (!isSelectable(index.tokens[i].kind)) continue
+        setCharSplit(null)
+        put({ from: i, to: i })
+        // С клавиатуры подсказку у пальца не показать, да и незачем: шаг по
+        // словам — это разбор текста, а не беглое чтение.
+        setView(PANEL)
+        return
+      }
     },
-    [index],
+    [index, put],
   )
 
   const clear = useCallback(() => {
-    setSelection(null)
+    put(null)
     setCharSplit(null)
-  }, [])
+    setView(HIDDEN)
+  }, [put])
 
   const selected = useMemo<Selected | null>(() => {
     if (charSplit) {
@@ -137,5 +190,19 @@ export function useSelection(index: ChapterIndex, content: string): SelectionSta
     }
   }, [selection, charSplit, index, content])
 
-  return { selection, charSplit, selected, onTap, onExtend, onCharacter, onStep, clear }
+  return {
+    selection,
+    charSplit,
+    selected,
+    view,
+    onTap,
+    onOpen,
+    onExtend,
+    onExtendEnd,
+    onPeek,
+    onPeekEnd,
+    onNarrow,
+    onStep,
+    clear,
+  }
 }

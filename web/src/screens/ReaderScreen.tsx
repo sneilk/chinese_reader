@@ -1,9 +1,10 @@
 /**
  * Экран чтения главы.
  *
- * Текст рендерится по токенам (T1.15): тап — слово, протяжка — фраза в
- * пределах предложения, долгий тап — символ. Панель перевода предложения —
- * T1.16, и контракт под неё уже есть: `selected` знает свои офсеты и номер
+ * Текст рендерится по токенам (T1.15): тап подсвечивает слово, удержание даёт
+ * подсказку с переводом у пальца, двойной тап раскрывает панель, протяжка
+ * собирает фразу в пределах предложения. Панель перевода предложения — T1.16,
+ * и контракт под неё уже есть: `selected` знает свои офсеты и номер
  * предложения.
  *
  * Отказ перевода не прячет текст: глава читаема начиная с `segmented`, и
@@ -16,6 +17,7 @@ import { ErrorNote } from '../components/ErrorNote'
 import { describeStatus } from '../errors'
 import { ChapterText } from '../reader/ChapterText'
 import { SentencePanel, type SaveState } from '../reader/SentencePanel'
+import { WordPeek } from '../reader/WordPeek'
 import { buildIndex } from '../reader/tokens'
 import { useLookup } from '../reader/useLookup'
 import { contextOf, useSelection } from '../reader/useSelection'
@@ -39,16 +41,26 @@ export function ReaderScreen({ id }: { id: number }) {
   const selection = useSelection(index, content)
   useTokenGestures(containerRef, index, selection)
 
-  // Обычно idx совпадает с местом в массиве, но полагаться на это не стоит:
-  // разъехавшаяся нумерация показала бы перевод соседнего предложения — и
-  // выглядело бы это как плохой перевод, а не как ошибка.
   // Значения ищем только для слов и знаков: во фразе искать нечего, статьи
-  // на неё в словаре нет по определению.
+  // на неё в словаре нет по определению. Запрос идёт и на обычном тапе, когда
+  // показывать ещё нечего: словари лежат в той же базе, зато подсказка по
+  // удержанию и панель по двойному тапу открываются уже из кэша.
   const lookupWord =
     selection.selected && selection.selected.granularity !== 'phrase'
       ? selection.selected.text
       : null
   const lookup = useLookup(lookupWord)
+
+  // Разбор по знакам возможен только для одного токена: у фразы он был бы
+  // разбором нескольких слов подряд, а это уже сам текст главы.
+  const activeToken =
+    selection.selection && selection.selection.from === selection.selection.to
+      ? (index.tokens[selection.selection.from] ?? null)
+      : null
+
+  // Обычно idx совпадает с местом в массиве, но полагаться на это не стоит:
+  // разъехавшаяся нумерация показала бы перевод соседнего предложения — и
+  // выглядело бы это как плохой перевод, а не как ошибка.
 
   const activeSentence = useMemo(() => {
     const idx = selection.selected?.sentence ?? -1
@@ -152,14 +164,26 @@ export function ReaderScreen({ id }: { id: number }) {
         !isPending(chapter.status) && !chapter.error && <p className="muted">Текста пока нет.</p>
       )}
 
-      {selection.selected && (
+      {selection.selected && selection.view.kind === 'panel' && (
         <SentencePanel
           selected={selection.selected}
           sentence={activeSentence}
           lookup={lookup}
+          token={activeToken}
+          charOffset={selection.charSplit?.charOffset ?? null}
+          onNarrow={selection.onNarrow}
           saveState={saveState}
           onSave={() => void saveWord()}
           onClose={selection.clear}
+        />
+      )}
+
+      {selection.selected && selection.view.kind === 'peek' && (
+        <WordPeek
+          term={selection.selected.text}
+          lookup={lookup}
+          x={selection.view.x}
+          y={selection.view.y}
         />
       )}
     </>

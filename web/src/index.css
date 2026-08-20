@@ -361,6 +361,51 @@ a {
   margin-bottom: var(--space-5);
 }
 
+/* --- подсказка по удержанию --- */
+
+/* Живёт поверх всего и не участвует в жестах вовсе: она всплывает, пока палец
+   ещё на экране, и любой перехват касания сломал бы то самое удержание,
+   которым её вызвали. Отсюда pointer-events: none. */
+.peek {
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  max-width: min(22rem, calc(100vw - 2 * var(--space-3)));
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  /* Подсказка стоит поверх текста той же гарнитуры и кегля — без тени она
+     читается как часть абзаца. */
+  box-shadow: 0 6px 20px rgb(0 0 0 / 35%);
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.peek__term {
+  font-family: var(--han);
+  font-size: 1.25rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.peek__reading {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* Значение обрезается одной строкой: подсказка не должна расти до карточки,
+   а за полным списком есть двойной тап. */
+.peek__sense {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* --- нижняя панель --- */
 
 .panel {
@@ -414,6 +459,35 @@ a {
 .panel__reading {
   color: var(--accent);
   font-size: 1rem;
+}
+
+/* Разбор слова по знакам. Ряд прокручивается, а не переносится: слово длиннее
+   четырёх знаков карточке не приезжает, но фраза из чужого источника может. */
+.panel__chars {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.panel__char {
+  flex: none;
+  font-family: var(--han);
+  font-size: 1.15rem;
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  /* 44px — минимальная цель для пальца, и знаку она как раз впору. */
+  min-width: 44px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.panel__char.is-selected {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  border-color: var(--accent);
 }
 
 /* Панель растёт вместе с содержимым, но не дальше половины экрана: карточка
