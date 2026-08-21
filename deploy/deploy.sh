@@ -56,6 +56,17 @@ say "перезапускаю сервис"
 ssh "$TARGET" 'sudo systemctl restart chinese-reader && sleep 2 && systemctl is-active chinese-reader'
 
 say "проверяю живость"
-ssh "$TARGET" 'curl -fsS localhost:8000/api/health && echo'
+# Ждём ответа, а не спрашиваем один раз. Приложение поднимается около секунды:
+# jieba строит префиксный словарь, и `systemctl is-active` отвечает «active»
+# раньше, чем uvicorn начинает слушать. Разовый curl из-за этой гонки сообщал
+# об отказе на успешной выкладке — а хуже ложного отказа только пропущенный
+# настоящий, потому что верить перестают обоим.
+ssh "$TARGET" 'for _ in $(seq 30); do
+	curl -fsS localhost:8000/api/health && echo && exit 0
+	sleep 1
+done
+echo "сервис не ответил за 30 секунд, последние логи:" >&2
+journalctl -u chinese-reader -n 20 --no-pager
+exit 1'
 
 say "готово"
