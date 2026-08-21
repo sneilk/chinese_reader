@@ -6,6 +6,9 @@
 * **одно предложение — один элемент `texts[]`**, ответ приходит в том же
   порядке. Выравнивание с `sentences.idx` получается бесплатно, и переведённый
   абзац не приходится резать обратно на предложения (§2);
+* **язык оригинала — параметр вызова, а не константа клиента**: направление
+  задаёт глава (`chapters.lang`), и один и тот же клиент переводит и `zh→ru`,
+  и `en→ru`. Целевой язык при этом константа: читатель один и русский;
 * батч — до 10 000 символов суммарно, дефолт в конфиге взят с запасом (§6);
 * глава переводится целиком при загрузке: при цене около 2,5 ₽ за главу
   экономия на непрочитанных предложениях не стоит задержки на каждый тап (§3);
@@ -32,14 +35,15 @@ from typing import Protocol
 import httpx
 
 from app.config import settings
-from app.domain import ErrorKind
+from app.domain import TARGET_LANGUAGE, ErrorKind, Language
 
 log = logging.getLogger(__name__)
 
 API_URL = "https://translate.api.cloud.yandex.net/translate/v2/translate"
 
-SOURCE_LANG = "zh"
-TARGET_LANG = "ru"
+#: Направление по умолчанию — китайский, с которого всё начиналось.
+SOURCE_LANG = Language.ZH
+TARGET_LANG = TARGET_LANGUAGE
 
 # Пустой запрос тарифицируется как один символ (translation.md §3), поэтому
 # считаем так же — иначе учёт разойдётся со счётом.
@@ -72,7 +76,9 @@ class TranslateResult:
 class Translator(Protocol):
     """Смена провайдера должна стоить один файл (концепция §4.2)."""
 
-    async def translate(self, texts: Sequence[str]) -> TranslateResult: ...
+    async def translate(
+        self, texts: Sequence[str], *, source: str = SOURCE_LANG
+    ) -> TranslateResult: ...
 
 
 def make_batches(texts: Sequence[str], limit: int) -> list[list[str]]:
@@ -154,7 +160,9 @@ class YandexTranslate:
     async def __aexit__(self, *_exc) -> None:
         await self.close()
 
-    async def translate(self, texts: Sequence[str]) -> TranslateResult:
+    async def translate(
+        self, texts: Sequence[str], *, source: str = SOURCE_LANG
+    ) -> TranslateResult:
         """Перевести предложения. Бросает TranslateFailure с одной причиной."""
         if not texts:
             return TranslateResult(texts=[], chars_sent=0, requests=0)
@@ -165,7 +173,7 @@ class YandexTranslate:
         chars = 0
         batches = make_batches(texts, self._batch_chars)
         for batch in batches:
-            out.extend(await self._translate_batch(batch))
+            out.extend(await self._translate_batch(batch, source))
             chars += billed_chars(batch)
 
         if len(out) != len(texts):
@@ -175,12 +183,12 @@ class YandexTranslate:
 
         return TranslateResult(texts=out, chars_sent=chars, requests=len(batches))
 
-    async def _translate_batch(self, batch: Sequence[str]) -> list[str]:
+    async def _translate_batch(self, batch: Sequence[str], source: str) -> list[str]:
         client = await self._get_client()
         body = {
             "folderId": self._folder_id,
             "texts": list(batch),
-            "sourceLanguageCode": SOURCE_LANG,
+            "sourceLanguageCode": str(source),
             "targetLanguageCode": TARGET_LANG,
             "format": "PLAIN_TEXT",
         }
@@ -206,7 +214,7 @@ class YandexTranslate:
                     "перевод: %s предложений, %s символов, %s→%s, глоссарий нет, %.2f с",
                     len(batch),
                     billed_chars(batch),
-                    SOURCE_LANG,
+                    source,
                     TARGET_LANG,
                     elapsed,
                 )

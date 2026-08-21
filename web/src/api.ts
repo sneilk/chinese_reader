@@ -13,6 +13,18 @@ export type ChapterStatus =
   | 'ready'
   | 'failed'
 
+/**
+ * Язык оригинала главы. Русского здесь нет: это язык перевода, а не чтения.
+ *
+ * От него зависят гарнитура текста, язык запроса к словарю и язык, под которым
+ * слово ляжет в личный словарь. Угадывать его по содержимому фронт не должен —
+ * он приезжает с главой.
+ */
+export type Language = 'zh' | 'en'
+
+/** Что показывает ридер: оригинал с разбором по словам или русский перевод. */
+export type ReadingMode = 'source' | 'translation'
+
 /** Причины отказа из RFC §4. Фронт разбирает их по `kind`, а не по тексту. */
 export type ErrorKind =
   | 'challenge'
@@ -21,6 +33,7 @@ export type ErrorKind =
   | 'fetch_timeout'
   | 'adapter_error'
   | 'translate_failed'
+  | 'speech_failed'
   | 'budget_exceeded'
   | 'bad_request'
 
@@ -80,6 +93,11 @@ export interface Diagnostics {
   translator_configured: boolean
   chars_this_month: number
   month_limit: number
+  speech_configured: boolean
+  speech_voice: string
+  speech_chars_this_month: number
+  speech_month_limit: number
+  tts_cache_bytes: number
   browser_profile_exists: boolean
   browser_headless: boolean
 }
@@ -88,12 +106,17 @@ export interface Chapter {
   id: number
   url: string
   title: string | null
+  lang: Language
   status: ChapterStatus
   error: ApiErrorBody | null
   content: string | null
   tokens: Token[]
   sentences: Sentence[]
   chars_sent: number
+  /** Адрес следующей главы на сайте — есть он или нет, решает адаптер. */
+  next_url: string | null
+  /** Она же, если уже загружена: тогда переход бесплатный, без похода на сайт. */
+  next_chapter_id: number | null
 }
 
 export interface ChapterAccepted {
@@ -122,6 +145,12 @@ export interface Lookup {
   found: boolean
   /** Карточка собрана из знаков, а не из статьи о слове целиком. */
   approximate: boolean
+  /**
+   * Форма, под которой слово нашлось: `running` найдено как `run`. `null` —
+   * совпало как есть. Показывать обязательно, иначе карточка выглядит так,
+   * будто в словаре стоит ровно то, что в тексте.
+   */
+  matched: string | null
   entries: DictEntry[]
   chars: CharGloss[]
 }
@@ -166,11 +195,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => request<{ status: string }>('/health'),
 
-  /** Поставить главу в очередь. Идемпотентно: повтор не ходит на сайт. */
-  createChapter: (url: string) =>
+  /**
+   * Поставить главу в очередь. Идемпотентно: повтор не ходит на сайт.
+   *
+   * `follow` продолжает работу за границу главы — конвейер пойдёт вперёд по
+   * ссылкам «следующая глава». Уже загруженные он перешагивает, не трогая
+   * сайт, поэтому повтор «догрузи ещё» приносит именно новые главы.
+   */
+  createChapter: (url: string, follow = 0) =>
     request<ChapterAccepted>('/chapters', {
       method: 'POST',
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, follow }),
     }),
 
   getChapter: (id: number) => request<Chapter>(`/chapters/${id}`),
@@ -180,7 +215,7 @@ export const api = {
     request<ChapterAccepted>(`/chapters/${id}/translate`, { method: 'POST' }),
 
   /** Значения слова из локальных словарей: без интернета и без задержки. */
-  lookup: (word: string, lang = 'zh') =>
+  lookup: (word: string, lang: Language = 'zh') =>
     request<Lookup>(`/lookup?word=${encodeURIComponent(word)}&lang=${lang}`),
 
   /**
@@ -212,6 +247,15 @@ export const api = {
 
   /** Состояние сервиса: что настроено, а что нет. */
   diagnostics: () => request<Diagnostics>('/diagnostics'),
+}
+
+/**
+ * Адрес озвучки предложения. Не запрос, а ссылка: её ставит `<audio>` и
+ * дальше сам решает, когда качать, сколько буферизовать и как перематывать.
+ * Отдать сюда байты через `fetch` значило бы отобрать у него всё это.
+ */
+export function audioUrl(chapterId: number, sentenceIdx: number): string {
+  return `/api/chapters/${chapterId}/audio/${sentenceIdx}`
 }
 
 /** Глава читаема начиная с `segmented`: текст и токены уже есть. */

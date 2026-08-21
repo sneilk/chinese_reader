@@ -21,12 +21,30 @@
 нет. Внутри одной фоновой задачи это честно: обращения к базе короткие и
 идут между await'ами, а тащить async-драйвер ради одного пользователя и
 одного писателя (RFC §10) не за чем.
+
+## Язык узнаётся из текста, а не из настройки
+
+Все три языковые развилки конвейера — чем резать на токены, какими правилами
+резать на предложения, с какого языка переводить — решаются одним значением,
+и приходит оно от адаптера вместе с текстом. Глобального «режима» нет
+намеренно: главы двух языков лежат в одной базе и читаются вперемешку, а
+переключатель режимов пришлось бы держать в голове и вспоминать перед каждой
+ссылкой.
+
+## Обход книги — отдельный шаг, а не продолжение загрузки
+
+Одна глава загружается сама по себе; книга обходится по ссылке «следующая
+глава» (`walk_chapters`). Разница принципиальная: у первой операции есть
+понятный конец, у второй его нет, поэтому у неё есть потолок, остановка на
+первом же отказе и защита от кольца ссылок. Склеивать их в одну функцию
+значило бы дать любой обычной загрузке шанс уйти на двадцать запросов.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from urllib.parse import urljoin
 
@@ -37,13 +55,15 @@ from app.adapters.base import AdapterFailure, ChapterRaw, SiteAdapter
 from app.adapters.registry import pick_adapter
 from app.config import settings
 from app.db.models import Chapter, Sentence
-from app.domain import ChapterStatus, ErrorKind
+from app.domain import ChapterStatus, ErrorKind, Language
 from app.fetchers.base import Fetcher, FetchFailure
+from app.lang import segment_en
 from app.lang.normalize import normalize
-from app.lang.segment import Segmenter, tokens_to_json
+from app.lang.segment import Segmenter, Token, tokens_to_json
 from app.lang.sentences import split_sentences
-from app.providers.translate import SOURCE_LANG, TARGET_LANG, TranslateFailure, Translator
+from app.providers.translate import TARGET_LANG, TranslateFailure, Translator
 from app.services import budget
+from app.services.chapters import get_or_create_chapter
 
 log = logging.getLogger(__name__)
 
@@ -102,15 +122,20 @@ async def _fetch_and_segment(
 
     raw = await fetch_pages(fetcher, chapter.url, pick_adapter(chapter.url))
 
+    # Язык объявляет адаптер, а generic-фолбэк определяет по тексту. До этого
+    # места он был догадкой по адресу — с этого становится фактом.
+    apply_language(chapter, raw.lang)
+
     # Канон — нормализованный текст: офсеты токенов и предложений считаются
     # по нему, поэтому нормализация обязана произойти до всего остального.
     canon = normalize(raw.paragraphs)
-    spans = split_sentences(canon)
-    tokens = segmenter.segment(canon)
+    spans = split_sentences(canon, raw.lang)
+    tokens = tokenize(canon, raw.lang, segmenter)
 
     chapter.title = raw.title or chapter.title
     chapter.content = canon
     chapter.tokens_json = tokens_to_json(tokens)
+    chapter.next_chapter_url = raw.next_chapter_url
     chapter.fetched_at = _now()
 
     # Переразбор той же главы не должен плодить предложения поверх старых.
@@ -123,12 +148,42 @@ async def _fetch_and_segment(
     chapter.status = ChapterStatus.SEGMENTED
     session.commit()
     log.info(
-        "глава %s: %s символов, %s предложений, %s токенов",
+        "глава %s (%s): %s символов, %s предложений, %s токенов",
         chapter.id,
+        chapter.lang,
         len(canon),
         len(spans),
         len(tokens),
     )
+
+
+def tokenize(canon: str, lang: Language, segmenter: Segmenter) -> list[Token]:
+    """Разрезать текст на токены по правилам его языка.
+
+    Китайскому нужен jieba со словарём — дорогой объект, живущий на всё
+    приложение. Английскому не нужно ничего: границы слов уже проставлены
+    пробелами, и вся работа — регулярка. Отсюда разная форма аргументов:
+    сегментатор приходит снаружи, английский токенизатор — просто функция.
+    """
+    if lang is Language.EN:
+        return segment_en.segment(canon)
+    return segmenter.segment(canon)
+
+
+def apply_language(chapter: Chapter, lang: Language) -> None:
+    """Проставить главе язык из разбора и подтянуть за ней книгу.
+
+    Книге язык правим только пока её главы одного языка: смешанная книга —
+    это не книга, а совпавший префикс адреса, и молча переписывать ей язык
+    по последней загруженной главе значило бы менять его туда-сюда.
+    """
+    chapter.lang = lang
+    document = chapter.document
+    if document is None:
+        return
+    siblings = {c.lang for c in document.chapters if c.id != chapter.id and c.content is not None}
+    if not siblings or siblings == {lang}:
+        document.lang = lang
 
 
 async def fetch_pages(fetcher: Fetcher, url: str, adapter: SiteAdapter) -> ChapterRaw:
@@ -165,10 +220,17 @@ async def fetch_pages(fetcher: Fetcher, url: str, adapter: SiteAdapter) -> Chapt
         visited.add(next_url)
         result = await fetcher.get(next_url)
         page = adapter.parse_chapter(result.html, result.url)
-        pages.append(page)
 
         # Адаптер вправе вернуть относительную ссылку — считаем её от того
-        # адреса, на котором в итоге оказались, а не от исходного.
+        # адреса, на котором в итоге оказались, а не от исходного. Обе ссылки
+        # вперёд разрешаются одинаково, но пагинацию мы проходим сами, а
+        # адрес следующей главы сохраняем и отдаём наружу.
+        if page.next_chapter_url:
+            page = replace(
+                page, next_chapter_url=urljoin(result.url, page.next_chapter_url)
+            )
+        pages.append(page)
+
         next_url = urljoin(result.url, page.next_url) if page.next_url else None
 
     if len(pages) > 1:
@@ -180,6 +242,10 @@ async def fetch_pages(fetcher: Fetcher, url: str, adapter: SiteAdapter) -> Chapt
     return ChapterRaw(
         title=first.title,
         paragraphs=[p for page in pages for p in page.paragraphs],
+        lang=first.lang,
+        # Ссылка на следующую главу берётся с последней страницы: на первой
+        # её обычно нет вовсе, а если есть — она про ту же главу.
+        next_chapter_url=pages[-1].next_chapter_url,
     )
 
 
@@ -221,8 +287,9 @@ async def translate_chapter(
     chapter.status = ChapterStatus.TRANSLATING
     session.commit()
 
+    source = Language(chapter.lang)
     try:
-        result = await translator.translate(texts)
+        result = await translator.translate(texts, source=source)
     except TranslateFailure as e:
         # Глава остаётся читаемой: текст и токены на месте, нет только переводов.
         chapter.status = ChapterStatus.SEGMENTED
@@ -247,7 +314,7 @@ async def translate_chapter(
     budget.record(
         session,
         provider="yandex",
-        direction=f"{SOURCE_LANG}-{TARGET_LANG}",
+        direction=f"{source}-{TARGET_LANG}",
         chars_sent=result.chars_sent,
         sentences=len(pending),
         chapter_id=chapter.id,
@@ -265,6 +332,66 @@ async def translate_chapter(
         result.requests,
     )
     return chapter
+
+
+async def walk_chapters(
+    session: Session,
+    chapter: Chapter,
+    *,
+    fetcher: Fetcher,
+    segmenter: Segmenter,
+    translator: Translator | None = None,
+    limit: int,
+) -> list[Chapter]:
+    """Пройти книгу вперёд по ссылкам «следующая глава». Возвращает загруженное.
+
+    Оглавления у novelarrow из разметки не достать (sources.md §2), поэтому
+    другого входа в книгу нет. Отсюда три правила, и каждое — про то, чтобы
+    обход закончился.
+
+    **Потолок жёсткий.** Книга-образец — 550 глав; обход без предела означал бы
+    полтысячи запросов к сайту с одного нажатия и счёт за перевод книги целиком.
+
+    **Первый отказ останавливает.** Челлендж или пропавшая глава посреди книги —
+    это повод разобраться, а не повод продолжить по инерции: следующие двадцать
+    запросов почти наверняка получат то же самое.
+
+    **Уже загруженная глава не перезагружается, но и не заканчивает обход.**
+    Дочитав до места, где остановились в прошлый раз, читатель нажмёт «ещё
+    десять» — и должен получить десять новых, а не «всё уже есть».
+    """
+    loaded: list[Chapter] = []
+    current = chapter
+    visited = {chapter.url}
+
+    for _ in range(max(0, limit)):
+        url = current.next_chapter_url
+        if not url:
+            log.info("обход книги: у главы %s нет ссылки вперёд", current.id)
+            break
+        if url in visited:
+            log.warning("обход книги: %s уже встречался, останавливаюсь", url)
+            break
+        visited.add(url)
+
+        nxt, created = get_or_create_chapter(session, url)
+        if not created and nxt.status != ChapterStatus.FAILED:
+            # Эта глава уже есть — перешагиваем через неё, не трогая сайт.
+            current = nxt
+            continue
+
+        await run_chapter_pipeline(
+            session, nxt, fetcher=fetcher, segmenter=segmenter, translator=translator
+        )
+        if nxt.status == ChapterStatus.FAILED:
+            log.warning("обход книги оборван на %s: %s", url, nxt.error_kind)
+            break
+
+        loaded.append(nxt)
+        current = nxt
+
+    log.info("обход книги от главы %s: загружено %s", chapter.id, len(loaded))
+    return loaded
 
 
 def _pending_sentences(session: Session, chapter: Chapter) -> Sequence[Sentence]:

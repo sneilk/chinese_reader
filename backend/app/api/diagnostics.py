@@ -19,7 +19,8 @@ from app.api.deps import SessionDep
 from app.api.schemas import DiagnosticsOut
 from app.config import settings
 from app.db.models import Chapter, DictEntry, Sentence, UserWord
-from app.services.budget import chars_this_month
+from app.services.budget import chars_this_month, speech_chars_this_month
+from app.services.speech import cache_size_bytes
 
 router = APIRouter(tags=["diagnostics"])
 
@@ -50,6 +51,11 @@ def read_diagnostics(session: SessionDep) -> DiagnosticsOut:
         translator_configured=bool(settings.yc_translate_api_key and settings.yc_folder_id),
         chars_this_month=chars_this_month(session),
         month_limit=settings.translate_max_chars_per_month,
+        speech_configured=bool(settings.speech_api_key and settings.yc_folder_id),
+        speech_voice=settings.speech_voice,
+        speech_chars_this_month=speech_chars_this_month(session),
+        speech_month_limit=settings.speech_max_chars_per_month,
+        tts_cache_bytes=cache_size_bytes(),
         browser_profile_exists=settings.browser_profile_dir.exists(),
         browser_headless=settings.browser_headless,
     )

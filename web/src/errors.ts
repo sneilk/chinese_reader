@@ -61,6 +61,13 @@ const MESSAGES: Record<string, ErrorInfo> = {
     retryable: false,
     readable: true,
   },
+  speech_failed: {
+    title: 'Озвучка не получилась',
+    advice:
+      'Текст и перевод на месте — не вышло только прочитать вслух. Чаще всего не хватает роли ai.speechkit-tts.user у сервисного аккаунта; проверьте это на экране состояния.',
+    retryable: true,
+    readable: true,
+  },
   budget_exceeded: {
     title: 'Достигнут лимит расходов на перевод',
     advice:

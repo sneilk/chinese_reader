@@ -13,12 +13,17 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.config import settings
 from app.db.models import Chapter, UserWord
-from app.domain import ChapterStatus
+from app.domain import ChapterStatus, Language
 
 
 class ChapterCreate(BaseModel):
     url: str = Field(min_length=8, max_length=1024)
+    #: Сколько ещё глав пройти вперёд по ссылке «следующая глава». Ноль —
+    #: обычная загрузка одной главы, и это значение по умолчанию: обход книги
+    #: должен быть решением читателя, а не побочным действием ссылки.
+    follow: int = Field(default=0, ge=0, le=settings.max_chapters_per_run)
 
     @field_validator("url")
     @classmethod
@@ -76,6 +81,10 @@ class LookupOut(BaseModel):
     found: bool
     # Карточка собрана из знаков, а не из статьи о слове целиком.
     approximate: bool
+    # Форма, под которой слово нашлось: `running` найдено как `run`. `None` —
+    # совпало как есть. Показывать обязательно: иначе карточка выглядит так,
+    # будто в словаре стоит ровно то, что в тексте.
+    matched: str | None = None
     entries: list[DictEntryOut] = []
     chars: list[CharGlossOut] = []
 
@@ -95,6 +104,11 @@ class DiagnosticsOut(BaseModel):
     translator_configured: bool
     chars_this_month: int
     month_limit: int
+    speech_configured: bool
+    speech_voice: str
+    speech_chars_this_month: int
+    speech_month_limit: int
+    tts_cache_bytes: int
     browser_profile_exists: bool
     browser_headless: bool
 
@@ -178,19 +192,27 @@ class ChapterOut(BaseModel):
     id: int
     url: str
     title: str | None = None
+    # Язык оригинала: от него зависит и шрифт текста, и язык запроса к
+    # словарю. Фронт не должен угадывать его по содержимому.
+    lang: Language = Language.ZH
     status: ChapterStatus
     error: ErrorOut | None = None
     content: str | None = None
     tokens: list[tuple[int, int, str]] = []
     sentences: list[SentenceOut] = []
     chars_sent: int = 0
+    #: Адрес следующей главы на сайте — есть он или нет, решает адаптер.
+    next_url: str | None = None
+    #: Она же, если уже загружена: тогда переход бесплатный, без похода на сайт.
+    next_chapter_id: int | None = None
 
     @classmethod
-    def of(cls, chapter: Chapter) -> ChapterOut:
+    def of(cls, chapter: Chapter, next_chapter_id: int | None = None) -> ChapterOut:
         return cls(
             id=chapter.id,
             url=chapter.url,
             title=chapter.title,
+            lang=Language(chapter.lang),
             status=ChapterStatus(chapter.status),
             error=(
                 ErrorOut(kind=chapter.error_kind, message=chapter.error_detail or "")
@@ -210,4 +232,6 @@ class ChapterOut(BaseModel):
                 for s in chapter.sentences
             ],
             chars_sent=chapter.chars_sent,
+            next_url=chapter.next_chapter_url,
+            next_chapter_id=next_chapter_id,
         )

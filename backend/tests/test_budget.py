@@ -121,7 +121,7 @@ class FakeTranslator:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def translate(self, texts):
+    async def translate(self, texts, *, source: str = "zh"):
         self.calls += 1
         raise AssertionError("при превышении лимита в сеть ходить нельзя")
 

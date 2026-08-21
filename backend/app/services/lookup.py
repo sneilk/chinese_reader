@@ -10,6 +10,19 @@
 такое слово на знаки и показать чтение и значение каждого — единственный способ
 дать осмысленную карточку вместо «не найдено» (RFC §5.5). Помечается это
 явно, чтобы читатель не принял сумму значений знаков за перевод слова.
+
+## Английский: вместо разбора по знакам — перебор форм
+
+У английского обратная беда. Слово в тексте почти всегда стоит не в той форме,
+в какой лежит в словаре: `running`, `wolves`, `didn't`. Разбирать его по
+буквам бессмысленно — буква ничего не значит, — зато можно перебрать формы,
+под которыми оно может быть записано (`lang/lemma.py`), и взять первое
+попадание. Найденная форма возвращается наружу: читатель должен видеть, что
+карточка про `run`, когда в тексте стоит `running`.
+
+Порядок кандидатов задан там же, и первым всегда идёт то, что написано в
+тексте: `saw` — это и пила, и прошедшее от `see`, и подменять одно другим,
+не спросив словарь, мы не вправе.
 """
 
 from __future__ import annotations
@@ -22,9 +35,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import DictEntry
+from app.domain import Language
+from app.lang.lemma import candidates
 
 # Порядок источников на выдаче: чем меньше число, тем выше статья.
-SOURCE_ORDER = {"bkrs": 0, "cedict": 1}
+# `endict` — англо-русский словарь; для английских слов он единственный, а в
+# китайской выдаче не появляется вовсе: у статей другой `lang`.
+SOURCE_ORDER = {"bkrs": 0, "endict": 0, "cedict": 1}
 _UNKNOWN_SOURCE = 99
 
 _HAN_RE = re.compile(r"^[一-鿿]+$")
@@ -57,6 +74,9 @@ class LookupResult:
     word: str
     entries: list[Entry] = field(default_factory=list)
     chars: list[CharGloss] = field(default_factory=list)
+    #: Форма, под которой слово нашлось, если она отличается от исходной:
+    #: `running` найдено как `run`. `None` — совпало как есть.
+    matched: str | None = None
 
     @property
     def found(self) -> bool:
@@ -95,11 +115,14 @@ def _entries_for(session: Session, word: str, lang: str) -> list[Entry]:
     return [e for e in entries if e.senses]
 
 
-def lookup(session: Session, word: str, lang: str = "zh") -> LookupResult:
+def lookup(session: Session, word: str, lang: str = Language.ZH) -> LookupResult:
     """Найти слово. Пустой результат означает, что показывать нечего вообще."""
     word = word.strip()
     if not word:
         return LookupResult(word=word)
+
+    if Language(lang) is Language.EN:
+        return _lookup_en(session, word)
 
     entries = _entries_for(session, word, lang)
     if entries:
@@ -122,6 +145,19 @@ def lookup(session: Session, word: str, lang: str = "zh") -> LookupResult:
             )
         )
     return LookupResult(word=word, chars=chars)
+
+
+def _lookup_en(session: Session, word: str) -> LookupResult:
+    """Перебрать формы слова до первого попадания в англо-русский словарь."""
+    for form in candidates(word):
+        entries = _entries_for(session, form, Language.EN)
+        if entries:
+            return LookupResult(
+                word=word,
+                entries=entries,
+                matched=form if form != word else None,
+            )
+    return LookupResult(word=word)
 
 
 def is_dictionary_headword(word: str) -> bool:

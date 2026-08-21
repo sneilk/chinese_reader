@@ -19,9 +19,17 @@
  * удержание теперь показывает слово целиком, и отдельного касания под разбор
  * по знакам не осталось. Ряд знаков под заголовком честнее прежнего долгого
  * тапа — он показывает, из чего слово состоит, ещё до того, как по нему попали.
+ *
+ * ## Английское слово разбирается не по буквам, а по формам
+ *
+ * Ряда знаков в английском режиме нет: буква ничего не значит, и предлагать
+ * ткнуть в неё — предлагать бессмыслицу. Вместо него показывается **форма, под
+ * которой слово нашлось**: в тексте `running`, в словаре `run`. Без этой
+ * пометки карточка выглядит так, будто словарь знает ровно то слово, которое
+ * стоит в тексте, — а он знает другое, и на `saw` эта разница решает всё.
  */
 
-import type { Lookup, Sentence } from '../api'
+import type { Language, Lookup, Sentence } from '../api'
 import { splitChars } from './tokens'
 import type { Selected } from './useSelection'
 
@@ -44,6 +52,11 @@ const SAVE_LABEL: Record<SaveState, string> = {
 function Entries({ lookup }: { lookup: Lookup }) {
   return (
     <>
+      {lookup.matched && (
+        <p className="card__note muted">
+          Статья на начальную форму — <b>{lookup.matched}</b>.
+        </p>
+      )}
       {lookup.entries.map((entry, i) => (
         <div className="card__entry" key={`${entry.source}-${i}`}>
           <div className="card__meta">
@@ -123,6 +136,7 @@ export function SentencePanel({
   sentence,
   lookup,
   token,
+  lang,
   charOffset,
   onNarrow,
   saveState,
@@ -134,6 +148,7 @@ export function SentencePanel({
   lookup: Lookup | null
   /** Выделенный токен целиком — основа для разбора по знакам. */
   token: { text: string; start: number } | null
+  lang: Language
   charOffset: number | null
   onNarrow: (charOffset: number | null) => void
   saveState: SaveState
@@ -142,13 +157,15 @@ export function SentencePanel({
 }) {
   const reading = lookup?.entries[0]?.reading
   // Односложному слову разбирать нечего: ряд из одного знака только шумит.
-  const chars = token && splitChars(token.text, token.start).length > 1 ? token : null
+  // В английском не нужен вовсе — буква не единица смысла.
+  const chars =
+    lang === 'zh' && token && splitChars(token.text, token.start).length > 1 ? token : null
 
   return (
     <aside className="panel" aria-live="polite">
       <div className="panel__inner">
         <div className="panel__head">
-          <span className="panel__term" lang="zh-Hans">
+          <span className="panel__term" lang={lang === 'zh' ? 'zh-Hans' : 'en'}>
             {selected.text}
           </span>
           {reading && <span className="panel__reading">{reading}</span>}

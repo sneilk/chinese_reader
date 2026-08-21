@@ -73,7 +73,7 @@ def test_too_short_chapter_is_rejected():
     [
         ("https://www.51shucheng.net/renwen/x/1.html", "51shucheng"),
         ("https://51shucheng.net/x/1.html", "51shucheng"),
-        ("https://novelarrow.com/novel/x", "generic"),
+        ("https://novelarrow.com/novel/x", "novelarrow"),
         ("https://example.com/", "generic"),
     ],
 )

@@ -150,7 +150,7 @@ def parse_dsl(lines: Iterable[str]) -> Iterator[BkrsEntry]:
         line = raw.rstrip("\n\r")
         if index == 0:
             # BOM в начале файла: без этого первая директива не начинается с
-            # решётки и разбирается как заголовок статьи. Читатели из `_open`
+            # решётки и разбирается как заголовок статьи. Читатели из `open_dump`
             # его снимают сами, но `parse_dsl` зовут и со списком строк.
             line = line.lstrip("﻿")
         if not line.strip() or line.startswith(_DIRECTIVES):
@@ -224,7 +224,7 @@ def usable_headwords(entry: BkrsEntry) -> Iterator[str]:
         yield headword
 
 
-def _open(path: Path):
+def open_dump(path: Path):
     """Открыть дамп, распакованный или как есть в `.gz`.
 
     `utf-8-sig` — не педантизм: BOM приклеился бы к `#NAME`, строка перестала
@@ -241,7 +241,7 @@ def import_file(session: Session, path: Path, *, batch: int = 5000) -> int:
 
     total = 0
     buf: list[dict] = []
-    with _open(path) as fh:
+    with open_dump(path) as fh:
         for entry in parse_dsl(fh):
             senses = json.dumps(entry.senses, ensure_ascii=False)
             for headword in usable_headwords(entry):

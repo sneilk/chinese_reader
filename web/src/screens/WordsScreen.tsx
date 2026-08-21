@@ -8,6 +8,11 @@
  * Правка идёт по месту, без отдельной формы: карточка словаря — это две
  * строки текста, и открывать ради них экран редактирования незачем. Кнопка
  * сохранения появляется только когда есть что сохранять.
+ *
+ * Словарь один на оба языка, а не два экрана: слова копятся из чтения, а
+ * читают вперемешку. Язык хранится у самого слова и решает здесь ровно одно —
+ * какой гарнитурой его набрать: иероглифу нужен кегль и шрифт, которые
+ * латинице только вредят.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -48,6 +53,7 @@ function WordCard({
 
   const dirty = translation !== (word.user_translation ?? '') || note !== (word.note ?? '')
   const context = word.contexts[0]
+  const lang = word.lang === 'zh' ? 'zh-Hans' : word.lang
 
   async function save() {
     setBusy(true)
@@ -71,7 +77,7 @@ function WordCard({
   return (
     <li className="word">
       <div className="word__head">
-        <span className="word__han" lang="zh-Hans">
+        <span className="word__han" lang={lang}>
           {word.headword}
         </span>
         {word.reading && <span className="word__reading">{word.reading}</span>}
@@ -79,7 +85,7 @@ function WordCard({
       </div>
 
       {context && (
-        <p className="word__context" lang="zh-Hans">
+        <p className="word__context" lang={lang}>
           {(() => {
             const parts = highlight(context.sentence, context.offset_start, context.offset_end)
             return (

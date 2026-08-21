@@ -11,6 +11,14 @@
 
 Проверка идёт до отправки и по полному объёму батча: узнать постфактум, что
 глава стоила вдвое больше лимита, — это не потолок, а отчёт.
+
+## Озвучка считается отдельно
+
+У синтеза речи свой тариф и свой журнал (`speech_usage`). Сложить его символы
+с символами перевода значило бы получить сумму, которая не соответствует ни
+одному счёту, и месячный потолок перестал бы что-либо ограничивать в обоих.
+Потолок на главу для озвучки не нужен: синтезируется по одному предложению
+по требованию читателя, и «глава целиком» здесь не событие.
 """
 
 from __future__ import annotations
@@ -22,7 +30,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db.models import TranslationUsage
+from app.db.models import SpeechUsage, TranslationUsage
 
 log = logging.getLogger(__name__)
 
@@ -90,3 +98,47 @@ def record(
     )
     session.commit()
     log.info("расход: %s символов, %s предложений, глава %s", chars_sent, sentences, chapter_id)
+
+
+# --- озвучка ---
+
+
+def speech_chars_this_month(session: Session, now: datetime | None = None) -> int:
+    """Сколько символов уже озвучено в текущем календарном месяце."""
+    total = session.scalar(
+        select(func.coalesce(func.sum(SpeechUsage.chars_sent), 0)).where(
+            SpeechUsage.created_at >= month_start(now)
+        )
+    )
+    return int(total or 0)
+
+
+def check_speech(session: Session, chars: int) -> None:
+    """Проверить месячный потолок озвучки до синтеза."""
+    limit = settings.speech_max_chars_per_month
+    if not limit:
+        return
+    total = speech_chars_this_month(session) + chars
+    if total > limit:
+        raise BudgetExceeded(f"озвучка просит {total} символов при лимите {limit} на месяц")
+
+
+def record_speech(
+    session: Session,
+    *,
+    provider: str,
+    voice: str,
+    chars_sent: int,
+    chapter_id: int | None = None,
+) -> None:
+    """Записать расход на синтез. Только новый: повтор играется из кэша."""
+    session.add(
+        SpeechUsage(
+            provider=provider,
+            voice=voice,
+            chars_sent=chars_sent,
+            chapter_id=chapter_id,
+        )
+    )
+    session.commit()
+    log.info("озвучка: %s символов, голос %s, глава %s", chars_sent, voice, chapter_id)

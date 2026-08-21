@@ -11,9 +11,14 @@
  * **Абзацы мемоизированы поодиночке.** Единственное, что меняет разметку, —
  * режим «долгий тап», где активный токен разбивается на символы. Перерисуется
  * при этом один абзац из семидесяти, а не глава целиком.
+ *
+ * По той же причине подсветка озвучиваемого предложения красит спаны напрямую,
+ * а не через состояние: во время чтения вслух она переезжает каждые несколько
+ * секунд, и пересборка главы на каждый переезд свела бы всю эту экономию на нет.
  */
 
 import { memo, useEffect, useRef } from 'react'
+import type { Language } from '../api'
 import type { ChapterIndex, TokenRef } from './tokens'
 import { splitChars } from './tokens'
 
@@ -30,6 +35,24 @@ export interface CharSplit {
 }
 
 const SELECTED = 'is-selected'
+const SPEAKING = 'is-speaking'
+
+/** Снять класс со всех спанов, покрашенных в прошлый раз. */
+function repaint(painted: React.RefObject<Element[]>, next: Element[], className: string): void {
+  for (const element of painted.current) element.classList.remove(className)
+  for (const element of next) element.classList.add(className)
+  painted.current = next
+}
+
+function spansOf(node: HTMLElement, range: TokenRange | null): Element[] {
+  if (!range) return []
+  const found: Element[] = []
+  for (let i = range.from; i <= range.to; i++) {
+    const span = node.querySelector(`[data-i="${i}"]`)
+    if (span) found.push(span)
+  }
+  return found
+}
 
 const TokenSpan = memo(function TokenSpan({
   token,
@@ -77,47 +100,43 @@ export function ChapterText({
   index,
   selection,
   charSplit,
+  speaking,
+  lang,
   containerRef,
 }: {
   index: ChapterIndex
   selection: TokenRange | null
   charSplit: CharSplit | null
+  /** Токены озвучиваемого предложения; `null` — тишина. */
+  speaking: TokenRange | null
+  lang: Language
   containerRef: React.RefObject<HTMLDivElement | null>
 }) {
   const painted = useRef<Element[]>([])
+  const spoken = useRef<Element[]>([])
 
   useEffect(() => {
     const node = containerRef.current
     if (!node) return
 
-    for (const element of painted.current) element.classList.remove(SELECTED)
-    painted.current = []
-
     if (charSplit) {
       const ch = node.querySelector(`[data-c="${charSplit.charOffset}"]`)
-      if (ch) {
-        ch.classList.add(SELECTED)
-        painted.current = [ch]
-      }
+      repaint(painted, ch ? [ch] : [], SELECTED)
       return
     }
-
-    if (!selection) return
-    const next: Element[] = []
-    for (let i = selection.from; i <= selection.to; i++) {
-      const span = node.querySelector(`[data-i="${i}"]`)
-      if (span) {
-        span.classList.add(SELECTED)
-        next.push(span)
-      }
-    }
-    painted.current = next
+    repaint(painted, spansOf(node, selection), SELECTED)
   }, [selection, charSplit, containerRef, index])
+
+  useEffect(() => {
+    const node = containerRef.current
+    if (!node) return
+    repaint(spoken, spansOf(node, speaking), SPEAKING)
+  }, [speaking, containerRef, index])
 
   return (
     <div
       className="reader"
-      lang="zh-Hans"
+      lang={lang === 'zh' ? 'zh-Hans' : 'en'}
       ref={containerRef}
       tabIndex={0}
       role="article"

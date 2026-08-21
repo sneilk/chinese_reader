@@ -17,7 +17,7 @@
  */
 
 import { useLayoutEffect, useRef, useState } from 'react'
-import type { Lookup } from '../api'
+import type { Language, Lookup } from '../api'
 
 /** Зазор до пальца и до краёв экрана. */
 const GAP = 12
@@ -29,7 +29,10 @@ function summary(lookup: Lookup | null): string {
   if (!lookup) return '…'
   if (lookup.found) {
     const senses = lookup.entries[0]?.senses ?? []
-    return senses.slice(0, MAX_SENSES).join('; ') || 'значения нет'
+    const text = senses.slice(0, MAX_SENSES).join('; ') || 'значения нет'
+    // Слово найдено не в той форме, в какой стоит в тексте: `running` → `run`.
+    // Без пометки подсказка выдавала бы значение другого слова за это.
+    return lookup.matched ? `${lookup.matched} — ${text}` : text
   }
   // Статьи на слово нет — обычный случай для имён героев. Собираем строку из
   // знаков, но по одному значению на знак: подсказка не место для разбора.
@@ -42,11 +45,13 @@ function summary(lookup: Lookup | null): string {
 export function WordPeek({
   term,
   lookup,
+  lang,
   x,
   y,
 }: {
   term: string
   lookup: Lookup | null
+  lang: Language
   x: number
   y: number
 }) {
@@ -74,7 +79,7 @@ export function WordPeek({
       aria-live="polite"
       style={box ? { left: box.left, top: box.top } : { left: 0, top: -9999 }}
     >
-      <span className="peek__term" lang="zh-Hans">
+      <span className="peek__term" lang={lang === 'zh' ? 'zh-Hans' : 'en'}>
         {term}
       </span>
       {reading && <span className="peek__reading">{reading}</span>}

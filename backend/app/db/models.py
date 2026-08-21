@@ -27,7 +27,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.domain import ChapterStatus, ErrorKind
+from app.domain import ChapterStatus, ErrorKind, Language
 
 __all__ = [
     "Chapter",
@@ -38,6 +38,7 @@ __all__ = [
     "ErrorKind",
     "Sentence",
     "Source",
+    "SpeechUsage",
     "TranslationUsage",
     "UserWord",
     "WordOccurrence",
@@ -99,6 +100,14 @@ class Chapter(Base):
     # Уникальность URL — то, что делает повторный POST /api/chapters бесплатным
     # и не пускает нас на сайт второй раз за той же главой.
     url: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
+    # Язык оригинала. Лежит на главе, а не только на книге, потому что
+    # известен он **после** загрузки: адаптер сайта его объявляет, а
+    # generic-фолбэк и вовсе определяет по тексту.
+    lang: Mapped[str] = mapped_column(String(8), nullable=False, default=Language.ZH)
+    # Адрес следующей главы книги, как его дал адаптер. Это не пагинация
+    # внутри главы (её конвейер склеивает молча), а вход в обход книги: у
+    # novelarrow оглавления в разметке нет, и других способов идти вперёд тоже.
+    next_chapter_url: Mapped[str | None] = mapped_column(String(1024))
     # Канон: нормализованный текст. Офсеты токенов и предложений — по нему.
     content: Mapped[str | None] = mapped_column(Text)
     tokens_json: Mapped[str | None] = mapped_column(Text)
@@ -124,6 +133,7 @@ class Chapter(Base):
             "status in ('fetching','segmented','translating','ready','failed')",
             name="ck_chapters_status",
         ),
+        CheckConstraint("lang in ('zh','en')", name="ck_chapters_lang"),
         Index("ix_chapters_document_idx", "document_id", "idx"),
     )
 
@@ -276,6 +286,31 @@ class TranslationUsage(Base):
     created_at: Mapped[datetime] = _created()
 
     __table_args__ = (Index("ix_translation_usage_created", "created_at"),)
+
+
+class SpeechUsage(Base):
+    """Журнал расходов на озвучку: одна строка — один синтез.
+
+    Отдельная таблица, а не строки в `translation_usage`, по единственной
+    причине: тариф другой. Сложив символы перевода и символы синтеза в одну
+    сумму, мы получили бы число, которое не соответствует ни одному счёту, и
+    месячный потолок стал бы бессмысленным для обоих.
+
+    Пишется только на **новый** синтез. Повторное прослушивание берёт mp3 из
+    кэша на диске и в журнал не попадает — иначе расход рос бы от чтения, а
+    не от денег.
+    """
+
+    __tablename__ = "speech_usage"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    voice: Mapped[str] = mapped_column(String(32), nullable=False)
+    chars_sent: Mapped[int] = mapped_column(Integer, nullable=False)
+    chapter_id: Mapped[int | None] = mapped_column(ForeignKey("chapters.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = _created()
+
+    __table_args__ = (Index("ix_speech_usage_created", "created_at"),)
 
 
 class DictEntry(Base):

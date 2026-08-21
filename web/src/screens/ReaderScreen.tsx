@@ -3,34 +3,69 @@
  *
  * Текст рендерится по токенам (T1.15): тап подсвечивает слово, удержание даёт
  * подсказку с переводом у пальца, двойной тап раскрывает панель, протяжка
- * собирает фразу в пределах предложения. Панель перевода предложения — T1.16,
- * и контракт под неё уже есть: `selected` знает свои офсеты и номер
- * предложения.
+ * собирает фразу в пределах предложения. Панель перевода предложения — T1.16.
  *
  * Отказ перевода не прячет текст: глава читаема начиная с `segmented`, и
  * предупреждение висит над ней, а не вместо неё.
+ *
+ * ## Два вида одной главы
+ *
+ * Оригинал и перевод — это одна разметка в двух проекциях, а не два экрана.
+ * Абзацы стоят на тех же местах, переключение не сдвигает текст, а озвучка
+ * идёт в обоих: подсветка едет либо по токенам оригинала, либо по фразам
+ * перевода, но предложение подсвечивается одно и то же.
+ *
+ * Жесты живут только в оригинале — в переводе разбирать нечего, он и так
+ * по-русски. Поэтому `useTokenGestures` получает признак «текст на экране»:
+ * без него возврат к оригиналу оставил бы жесты мёртвыми.
+ *
+ * ## Язык приезжает с главой
+ *
+ * Ни один экран его не угадывает. От `chapter.lang` зависят гарнитура текста,
+ * язык запроса к словарю и язык, под которым слово ляжет в личный словарь —
+ * три места, где ошибка выглядела бы как «словарь сломался».
  */
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError, api, isPending, isReadable } from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 import { describeStatus } from '../errors'
 import { ChapterText } from '../reader/ChapterText'
+import { ReaderBar } from '../reader/ReaderBar'
 import { SentencePanel, type SaveState } from '../reader/SentencePanel'
+import { TranslationText } from '../reader/TranslationText'
 import { WordPeek } from '../reader/WordPeek'
 import { buildIndex } from '../reader/tokens'
 import { useLookup } from '../reader/useLookup'
+import { useReadingMode } from '../reader/useReadingMode'
 import { contextOf, useSelection } from '../reader/useSelection'
+import { useSpeech } from '../reader/useSpeech'
 import { useTokenGestures } from '../reader/useTokenGestures'
+import { hrefFor, navigate } from '../router'
 import { useChapter } from '../useChapter'
+
+/** Держать озвучиваемую фразу на виду: слушать главу, глядя в её начало, незачем. */
+function useFollowSpeech(sentence: number, playing: boolean): void {
+  useEffect(() => {
+    if (!playing || sentence < 0) return
+    const node = document.querySelector('.is-speaking')
+    if (!node) return
+    const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    node.scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' })
+  }, [sentence, playing])
+}
 
 export function ReaderScreen({ id }: { id: number }) {
   const { chapter, requestError, loading, reload } = useChapter(id)
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState<ApiError | null>(null)
+  const [loadingNext, setLoadingNext] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
+  const [mode, setMode] = useReadingMode()
   const content = chapter?.content ?? ''
+  const lang = chapter?.lang ?? 'zh'
+
   // Индекс перестраивается только при смене главы: опрос статуса приносит
   // тот же текст, и пересобирать 2500 токенов на каждый ответ незачем.
   const index = useMemo(
@@ -38,8 +73,11 @@ export function ReaderScreen({ id }: { id: number }) {
     [content, chapter?.tokens, chapter?.sentences],
   )
 
+  const speech = useSpeech(chapter)
+  const showSource = mode === 'source'
+
   const selection = useSelection(index, content)
-  useTokenGestures(containerRef, index, selection)
+  useTokenGestures(containerRef, index, selection, showSource)
 
   // Значения ищем только для слов и знаков: во фразе искать нечего, статьи
   // на неё в словаре нет по определению. Запрос идёт и на обычном тапе, когда
@@ -49,7 +87,7 @@ export function ReaderScreen({ id }: { id: number }) {
     selection.selected && selection.selected.granularity !== 'phrase'
       ? selection.selected.text
       : null
-  const lookup = useLookup(lookupWord)
+  const lookup = useLookup(lookupWord, lang)
 
   // Разбор по знакам возможен только для одного токена: у фразы он был бы
   // разбором нескольких слов подряд, а это уже сам текст главы.
@@ -69,6 +107,20 @@ export function ReaderScreen({ id }: { id: number }) {
     return direct?.idx === idx ? direct : (chapter.sentences.find((s) => s.idx === idx) ?? null)
   }, [chapter, selection.selected?.sentence])
 
+  // Озвучка адресуется номером предложения, а индексы главы — местом в
+  // массиве. Здесь эти два числа сходятся, и только здесь.
+  const speaking = speech.current
+  const speakingTokens = useMemo(() => {
+    if (speaking < 0 || !chapter) return null
+    const position = chapter.sentences.findIndex((s) => s.idx === speaking)
+    if (position < 0) return null
+    const from = index.firstToken[position]
+    const to = index.lastToken[position]
+    return from >= 0 && to >= 0 ? { from, to } : null
+  }, [speaking, chapter, index])
+
+  useFollowSpeech(speaking, speech.playing)
+
   // Состояние сохранения живёт по слову: перешли на другое — кнопка снова
   // готова, а «в словаре» не остаётся висеть от прошлого.
   const [saved, setSaved] = useState<Record<string, SaveState>>({})
@@ -84,6 +136,7 @@ export function ReaderScreen({ id }: { id: number }) {
     try {
       await api.saveWord({
         headword: selected.text,
+        lang: chapter.lang,
         reading: lookup?.entries[0]?.reading ?? null,
         context: context
           ? { ...context, chapter_id: chapter.id, sentence_id: activeSentence?.id ?? null }
@@ -108,6 +161,28 @@ export function ReaderScreen({ id }: { id: number }) {
     }
   }
 
+  /**
+   * Загрузить следующую главу и перейти к ней сразу.
+   *
+   * Ждать здесь нечего: экран новой главы сам опрашивает статус и показывает
+   * прогресс, а стоять на прочитанной главе со спиннером — значит смотреть на
+   * то, что уже прочитано.
+   */
+  async function openNext() {
+    if (!chapter?.next_url || loadingNext) return
+    setLoadingNext(true)
+    setRetryError(null)
+    try {
+      const accepted = await api.createChapter(chapter.next_url)
+      speech.stop()
+      navigate({ name: 'chapter', id: accepted.id })
+    } catch (e) {
+      setRetryError(e instanceof ApiError ? e : new ApiError('network', String(e)))
+    } finally {
+      setLoadingNext(false)
+    }
+  }
+
   if (requestError) {
     return <ErrorNote kind={requestError.kind} detail={requestError.message} onRetry={reload} />
   }
@@ -117,10 +192,15 @@ export function ReaderScreen({ id }: { id: number }) {
   }
 
   const missingTranslation = chapter.sentences.some((s) => s.translation === null)
+  const readable = isReadable(chapter.status) && Boolean(chapter.content)
 
   return (
     <>
-      {chapter.title && <h1 className="reader__title">{chapter.title}</h1>}
+      {chapter.title && (
+        <h1 className="reader__title" lang={lang === 'zh' ? 'zh-Hans' : 'en'}>
+          {chapter.title}
+        </h1>
+      )}
 
       {chapter.error && (
         <ErrorNote
@@ -153,23 +233,66 @@ export function ReaderScreen({ id }: { id: number }) {
 
       {retryError && <ErrorNote kind={retryError.kind} detail={retryError.message} />}
 
-      {isReadable(chapter.status) && chapter.content ? (
-        <ChapterText
-          index={index}
-          selection={selection.selection}
-          charSplit={selection.charSplit}
-          containerRef={containerRef}
-        />
+      {readable && <ReaderBar mode={mode} onMode={setMode} speech={speech} />}
+
+      {speech.failure && <ErrorNote kind={speech.failure} detail="" />}
+
+      {readable ? (
+        showSource ? (
+          <ChapterText
+            index={index}
+            selection={selection.selection}
+            charSplit={selection.charSplit}
+            speaking={speakingTokens}
+            lang={lang}
+            containerRef={containerRef}
+          />
+        ) : (
+          <TranslationText
+            index={index}
+            content={content}
+            sentences={chapter.sentences}
+            lang={lang}
+            speaking={speaking}
+            onPlayFrom={speech.playFrom}
+          />
+        )
       ) : (
         !isPending(chapter.status) && !chapter.error && <p className="muted">Текста пока нет.</p>
       )}
 
-      {selection.selected && selection.view.kind === 'panel' && (
+      {readable && (
+        <nav className="chapternav" aria-label="Переход по главам">
+          {chapter.next_chapter_id !== null ? (
+            <a
+              className="button"
+              href={hrefFor({ name: 'chapter', id: chapter.next_chapter_id })}
+              onClick={speech.stop}
+            >
+              Следующая глава →
+            </a>
+          ) : chapter.next_url ? (
+            <button
+              className="button"
+              type="button"
+              onClick={() => void openNext()}
+              disabled={loadingNext}
+            >
+              {loadingNext ? 'Загружаю…' : 'Загрузить следующую →'}
+            </button>
+          ) : (
+            <p className="muted">Ссылки на следующую главу на странице не нашлось.</p>
+          )}
+        </nav>
+      )}
+
+      {showSource && selection.selected && selection.view.kind === 'panel' && (
         <SentencePanel
           selected={selection.selected}
           sentence={activeSentence}
           lookup={lookup}
           token={activeToken}
+          lang={lang}
           charOffset={selection.charSplit?.charOffset ?? null}
           onNarrow={selection.onNarrow}
           saveState={saveState}
@@ -178,10 +301,11 @@ export function ReaderScreen({ id }: { id: number }) {
         />
       )}
 
-      {selection.selected && selection.view.kind === 'peek' && (
+      {showSource && selection.selected && selection.view.kind === 'peek' && (
         <WordPeek
           term={selection.selected.text}
           lookup={lookup}
+          lang={lang}
           x={selection.view.x}
           y={selection.view.y}
         />

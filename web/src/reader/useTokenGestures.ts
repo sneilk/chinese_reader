@@ -84,6 +84,13 @@ export function useTokenGestures(
   ref: React.RefObject<HTMLElement | null>,
   index: ChapterIndex,
   callbacks: GestureCallbacks,
+  /**
+   * Есть ли на экране текст оригинала. В режиме перевода его нет вовсе, и
+   * подписываться не на что — но флаг обязан быть **в зависимостях**: без него
+   * возврат к оригиналу застал бы эффект неперезапущенным, контейнер — новым,
+   * а жесты — мёртвыми до перезагрузки страницы.
+   */
+  active = true,
 ): void {
   // Колбэки приезжают новым объектом на каждый рендер, а выделение меняет
   // состояние на каждом движении пальца. Если держать их в зависимостях
@@ -97,7 +104,7 @@ export function useTokenGestures(
   // обнулить и незакрытый жест, и память о первом касании двойного тапа.
   useEffect(() => {
     const node = ref.current
-    if (!node) return
+    if (!node || !active) return
 
     let gesture: Gesture | null = null
     let lastTap: { tokenIndex: number; at: number } | null = null
@@ -218,5 +225,5 @@ export function useTokenGestures(
       node.removeEventListener('pointercancel', onPointerCancel)
       node.removeEventListener('keydown', onKeyDown)
     }
-  }, [ref, index])
+  }, [ref, index, active])
 }

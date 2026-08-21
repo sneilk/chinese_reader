@@ -21,14 +21,15 @@ from urllib.parse import urlparse
 
 from lxml import html as lh
 
-from app.adapters.base import MIN_CHAPTER_HAN, AdapterFailure, ChapterRaw, han_count
-from app.domain import ErrorKind
+from app.adapters.base import AdapterFailure, ChapterRaw, han_count, require_text
+from app.domain import ErrorKind, Language
 
 _JUNK_TAGS = ("script", "style", "ins", "iframe", "noscript")
 
 
 class ShuchengAdapter:
     name = "51shucheng"
+    lang = Language.ZH
 
     def matches(self, url: str) -> bool:
         host = (urlparse(url).hostname or "").lower()
@@ -55,13 +56,8 @@ class ShuchengAdapter:
             if han_count(text):
                 paragraphs.append(text)
 
-        chapter = ChapterRaw(title=self._title(doc), paragraphs=paragraphs)
-        if chapter.han < MIN_CHAPTER_HAN:
-            raise AdapterFailure(
-                ErrorKind.EMPTY_EXTRACT,
-                f"#neirong есть, но текста в нём {chapter.han} иероглифов",
-            )
-        return chapter
+        chapter = ChapterRaw(title=self._title(doc), paragraphs=paragraphs, lang=self.lang)
+        return require_text(chapter, "#neirong есть, но пуст")
 
     @staticmethod
     def _title(doc) -> str:

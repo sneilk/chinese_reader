@@ -21,14 +21,19 @@ from app.main import app
 from app.services.lookup import is_dictionary_headword, lookup
 
 
-def _entry(headword, senses, source="cedict", reading=None):
+def _entry(headword, senses, source="cedict", reading=None, lang="zh"):
     return DictEntry(
-        lang="zh",
+        lang=lang,
         headword=headword,
         reading=reading,
         senses_json=json.dumps(senses, ensure_ascii=False),
         source=source,
     )
+
+
+def _en(headword, senses, reading=None):
+    """Статья англо-русского словаря. Заголовки в нём строчные — как при импорте."""
+    return _entry(headword, senses, source="endict", reading=reading, lang="en")
 
 
 @pytest.fixture
@@ -45,6 +50,13 @@ def factory(tmp_path):
                 _entry("仙", ["immortal", "celestial being"], reading="xiān"),
                 _entry("姑", ["aunt", "girl"], reading="gū"),
                 _entry("OK", ["okay"], reading=None),
+                _en("run", ["бежать, бегать", "управлять"], reading="rʌn"),
+                _en("lantern", ["фонарь"], reading="ˈlæntən"),
+                _en("wolf", ["волк"]),
+                _en("city", ["город"]),
+                _en("saw", ["пила"]),
+                _en("see", ["видеть, смотреть"]),
+                _en("do", ["делать, выполнять"]),
             ]
         )
         session.commit()
@@ -144,5 +156,81 @@ def test_api_nothing_found(client):
 
 def test_api_requires_word(client):
     r = client.get("/api/lookup")
+    assert r.status_code == 422
+    assert r.json()["error"]["kind"] == "bad_request"
+
+
+# --- английский ---
+#
+# У китайского беда в том, что слова нет в словаре (имя героя), и лечится она
+# разбором по знакам. У английского обратная: слово есть, но стоит не в той
+# форме. Поэтому здесь проверяется перебор форм — и то, что найденная форма
+# доезжает наружу: карточка про `run` при `running` в тексте не должна
+# выглядеть так, будто в словаре стоит ровно то, что в тексте.
+
+
+def test_en_exact_word(session):
+    result = lookup(session, "lantern", "en")
+    assert result.found
+    assert result.matched is None
+    assert result.entries[0].senses == ["фонарь"]
+
+
+def test_en_inflected_form_found_by_lemma(session):
+    result = lookup(session, "running", "en")
+    assert result.found
+    assert result.matched == "run"
+    assert result.entries[0].senses[0] == "бежать, бегать"
+
+
+def test_en_irregular_plural(session):
+    assert lookup(session, "wolves", "en").matched == "wolf"
+
+
+def test_en_capitalised_word_found(session):
+    """Слово в начале предложения приходит с большой буквы, а словарь строчный."""
+    result = lookup(session, "City", "en")
+    assert result.found
+    assert result.matched == "city"
+
+
+def test_en_exact_form_beats_the_lemma(session):
+    """`saw` — и пила, и прошедшее от `see`. В тексте стоит пила."""
+    result = lookup(session, "saw", "en")
+    assert result.matched is None
+    assert result.entries[0].senses == ["пила"]
+
+
+def test_en_contraction(session):
+    assert lookup(session, "don't", "en").matched == "do"
+
+
+def test_en_no_character_fallback(session):
+    """Разбирать английское слово по буквам бессмысленно — буква ничего не значит."""
+    result = lookup(session, "zzzqqq", "en")
+    assert not result.found
+    assert not result.approximate
+    assert result.chars == []
+
+
+def test_en_does_not_see_chinese_entries(session):
+    """Словари разделены по `lang`: китайская статья в английскую выдачу не течёт."""
+    assert not lookup(session, "学习", "en").found
+
+
+def test_zh_does_not_see_english_entries(session):
+    assert not lookup(session, "lantern").found
+
+
+def test_api_english_lookup(client):
+    body = client.get("/api/lookup", params={"word": "wolves", "lang": "en"}).json()
+    assert body["found"] is True
+    assert body["matched"] == "wolf"
+    assert body["entries"][0]["senses"] == ["волк"]
+
+
+def test_api_rejects_unknown_language(client):
+    """Языков ровно два, и оба — языки оригинала. `ru` читать не нужно."""
+    r = client.get("/api/lookup", params={"word": "wolf", "lang": "ru"})
     assert r.status_code == 422
     assert r.json()["error"]["kind"] == "bad_request"

@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Query
 
 from app.api.deps import SessionDep
 from app.api.schemas import CharGlossOut, DictEntryOut, LookupOut
+from app.domain import Language
 from app.services.lookup import lookup
 
 router = APIRouter(tags=["dictionary"])
@@ -19,13 +22,14 @@ router = APIRouter(tags=["dictionary"])
 def read_lookup(
     session: SessionDep,
     word: str = Query(min_length=1, max_length=64),
-    lang: str = Query(default="zh", max_length=8),
+    lang: Annotated[Language, Query()] = Language.ZH,
 ) -> LookupOut:
     result = lookup(session, word, lang)
     return LookupOut(
         word=result.word,
         found=result.found,
         approximate=result.approximate,
+        matched=result.matched,
         entries=[
             DictEntryOut(
                 headword=e.headword,

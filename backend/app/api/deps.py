@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.fetchers.base import Fetcher
 from app.lang.segment import Segmenter
+from app.providers.speech import Synthesizer
 from app.providers.translate import Translator
 
 SessionFactory = Callable[[], Session]
@@ -59,6 +60,11 @@ def get_translator(request: Request) -> Translator | None:
     return getattr(request.app.state, "translator", None)
 
 
+def get_synthesizer(request: Request) -> Synthesizer | None:
+    """`None` означает «озвучка не настроена» — глава читается, но не звучит."""
+    return getattr(request.app.state, "synthesizer", None)
+
+
 # Через Annotated, а не Depends в значении по умолчанию: так ручки читаются
 # как обычные функции с типами, и линтер не спорит с вызовом в дефолте.
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -67,3 +73,4 @@ FetcherDep = Annotated[Fetcher, Depends(get_fetcher)]
 SegmenterDep = Annotated[Segmenter, Depends(get_segmenter)]
 OptionalSegmenterDep = Annotated[Segmenter | None, Depends(get_optional_segmenter)]
 TranslatorDep = Annotated[Translator | None, Depends(get_translator)]
+SynthesizerDep = Annotated[Synthesizer | None, Depends(get_synthesizer)]

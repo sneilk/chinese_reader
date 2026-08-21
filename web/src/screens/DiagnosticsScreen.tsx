@@ -20,10 +20,16 @@ interface Check {
   advice?: string
 }
 
+function share(used: number, limit: number): number {
+  return limit ? Math.round((used / limit) * 100) : 0
+}
+
 function buildChecks(d: Diagnostics): Check[] {
   const cedict = d.dict_sources.cedict ?? 0
   const bkrs = d.dict_sources.bkrs ?? 0
-  const monthShare = d.month_limit ? Math.round((d.chars_this_month / d.month_limit) * 100) : 0
+  const endict = d.dict_sources.endict ?? 0
+  const monthShare = share(d.chars_this_month, d.month_limit)
+  const speechShare = share(d.speech_chars_this_month, d.speech_month_limit)
 
   return [
     {
@@ -45,6 +51,14 @@ function buildChecks(d: Diagnostics): Check[] {
       advice: 'Необязателен, но без него значения будут английскими: scripts/import_bkrs.py.',
     },
     {
+      label: 'Англо-русский словарь',
+      ok: endict > 0,
+      detail: endict ? `${endict.toLocaleString('ru-RU')} статей` : 'не импортирован',
+      advice:
+        'Нужен только для английских глав: без него карточка слова будет пустой. ' +
+        'scripts/import_endict.py <файл.dsl>.',
+    },
+    {
       label: 'Словарь сегментатора',
       ok: d.userdict_words > 0,
       detail: d.userdict_words ? `${d.userdict_words.toLocaleString('ru-RU')} слов` : 'пуст',
@@ -55,6 +69,14 @@ function buildChecks(d: Diagnostics): Check[] {
       ok: d.translator_configured,
       detail: d.translator_configured ? 'ключ задан' : 'ключ не задан',
       advice: 'Без ключа главы доходят до segmented и читаются без перевода.',
+    },
+    {
+      label: 'Озвучка',
+      ok: d.speech_configured,
+      detail: d.speech_configured ? `ключ задан, голос ${d.speech_voice}` : 'ключ не задан',
+      advice:
+        'Без ключа глава читается, но не звучит. Роль нужна своя — ai.speechkit-tts.user: ' +
+        'с одной только ai.translate.user синтез отвечает 403.',
     },
     {
       label: 'Профиль браузера',
@@ -73,6 +95,15 @@ function buildChecks(d: Diagnostics): Check[] {
       ok: monthShare < 90,
       detail: `${d.chars_this_month.toLocaleString('ru-RU')} из ${d.month_limit.toLocaleString('ru-RU')} символов (${monthShare}%)`,
       advice: 'При достижении лимита перевод остановится, чтение — нет.',
+    },
+    {
+      label: 'Расход на озвучку',
+      ok: speechShare < 90,
+      detail:
+        `${d.speech_chars_this_month.toLocaleString('ru-RU')} из ` +
+        `${d.speech_month_limit.toLocaleString('ru-RU')} символов (${speechShare}%), ` +
+        `в кэше ${(d.tts_cache_bytes / 1024 / 1024).toFixed(1)} МБ`,
+      advice: 'Потолок свой, отдельно от перевода: тариф у синтеза другой.',
     },
   ]
 }

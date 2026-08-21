@@ -10,11 +10,13 @@
  */
 
 import { useEffect, useState } from 'react'
-import { ApiError, api, type Lookup } from '../api'
+import { ApiError, api, type Language, type Lookup } from '../api'
 
+// Ключ кэша включает язык: `run` в китайской главе и в английской — разные
+// вопросы к разным словарям, и один ответ на оба был бы неверным для обоих.
 const cache = new Map<string, Lookup>()
 
-export function useLookup(word: string | null, lang = 'zh'): Lookup | null {
+export function useLookup(word: string | null, lang: Language = 'zh'): Lookup | null {
   const [result, setResult] = useState<Lookup | null>(
     word ? (cache.get(`${lang}:${word}`) ?? null) : null,
   )

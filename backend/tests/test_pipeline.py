@@ -97,9 +97,11 @@ class FakeTranslator:
     def __init__(self, failure: Exception | None = None) -> None:
         self._failure = failure
         self.seen: list[list[str]] = []
+        self.sources: list[str] = []
 
-    async def translate(self, texts) -> TranslateResult:
+    async def translate(self, texts, *, source: str = "zh") -> TranslateResult:
         self.seen.append(list(texts))
+        self.sources.append(str(source))
         if self._failure is not None:
             raise self._failure
         return TranslateResult(

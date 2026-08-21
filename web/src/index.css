@@ -40,15 +40,33 @@
   --radius: 10px;
   --radius-sm: 6px;
 
+  /* Высота верхней панели задана числом, а не набрана содержимым: под ней
+     липнет полоса управления чтением, и её отступ обязан совпасть с этой
+     высотой точно. Разойдутся на пару пикселей — и в щель между ними будет
+     проезжать текст главы. */
+  --topbar-h: 4.25rem;
+
   --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   /* Шрифты с иероглифами: системные CJK идут первыми, иначе браузер соберёт
      строку из подставных глифов разного веса. */
   --han: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC',
     'Microsoft YaHei', var(--sans);
+  /* Латиница и кириллица длинного текста: у засечек лучше держится строка на
+     абзаце в двести слов, а иероглифам они не нужны — там кегль решает всё. */
+  --serif: 'Iowan Old Style', 'Palatino Linotype', Georgia, 'Times New Roman', serif;
 
   --text-size: 17px;
+  /* Иероглифу нужен кегль больше, чем букве: в мелком тексте черты сливаются.
+     Латинице те же 26px дали бы строку в шесть слов — читать невозможно. */
   --reader-size: 26px;
+  --reader-size-latin: 21px;
   --reader-line: 2;
+  --reader-line-latin: 1.65;
+
+  /* Подсветка озвучиваемой фразы. Отдельный цвет от выделения намеренно:
+     синим помечено то, что выбрал палец, зелёным — то, что звучит сейчас, и
+     во время чтения вслух они видны одновременно. */
+  --speaking: var(--ok);
 
   font: var(--text-size) / 1.5 var(--sans);
   color: var(--text);
@@ -123,7 +141,8 @@ a {
   display: flex;
   gap: var(--space-2);
   align-items: center;
-  padding: var(--space-3) var(--space-4);
+  height: var(--topbar-h);
+  padding: 0 var(--space-4);
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
@@ -228,6 +247,90 @@ a {
   align-items: center;
 }
 
+/* Числовое поле не должно тянуться на всю ширину: в нём две цифры. */
+.input--narrow {
+  width: 6rem;
+}
+
+/* --- полоса управления чтением --- */
+
+/* Липкая, потому что переключаться между оригиналом и переводом читатель
+   будет посреди главы: решение «дальше я не разберу» приходит на середине
+   абзаца, и лезть за ним наверх страницы — значит терять место. */
+.readerbar {
+  position: sticky;
+  /* Вплотную под верхней панелью: минус пиксель прячет шов, а любая щель
+     между ними работала бы окном, в котором едет текст главы. */
+  top: calc(var(--topbar-h) - 1px);
+  z-index: 5;
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+  padding: var(--space-2) 0;
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.switch {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.switch__option {
+  font: 600 0.95rem var(--sans);
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  padding: var(--space-2) var(--space-4);
+  /* 44px — минимальная цель для пальца. */
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.switch__option.is-selected {
+  color: var(--accent-contrast);
+  background: var(--accent);
+}
+
+.switch__option:not(.is-selected):hover {
+  color: var(--text);
+  background: var(--bg-raised);
+}
+
+.readerbar__play,
+.readerbar__stop {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  font: 600 0.95rem var(--sans);
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-4);
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.readerbar__play[aria-pressed='true'] {
+  border-color: var(--speaking);
+  color: var(--speaking);
+}
+
+.readerbar__play:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.readerbar__stop {
+  margin-inline-start: auto;
+  color: var(--text-dim);
+}
+
 /* --- сообщения --- */
 
 .note {
@@ -322,10 +425,29 @@ a {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Латинский текст главы: другой шрифт, кегль и интерлиньяж. Выбирается по
+   атрибуту `lang`, который ридер и так проставляет ради переносов и словаря —
+   второго источника правды о языке заводить незачем. */
+.reader:lang(en),
+.reader:lang(ru) {
+  font-family: var(--serif);
+  font-size: var(--reader-size-latin);
+  line-height: var(--reader-line-latin);
+}
+
 .reader:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: var(--space-2);
   border-radius: var(--radius-sm);
+}
+
+/* Перевод читают, а не разбирают: жесты по нему не ходят, поэтому запрет
+   нативного выделения снимается — текст снова можно скопировать. */
+.reader--translation {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+  touch-action: auto;
 }
 
 /* Токен — обычный текст, пока по нему не попали. Ни рамок, ни отступов:
@@ -338,6 +460,15 @@ a {
 .tk.is-selected,
 .ch.is-selected {
   background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+/* Что звучит сейчас. Только фон и только он: во время озвучки подсветка
+   переезжает каждые несколько секунд, и любое изменение геометрии заставило
+   бы браузер пересчитывать раскладку главы на каждом переезде. */
+.tk.is-speaking,
+.sn.is-speaking {
+  background: color-mix(in srgb, var(--speaking) 24%, transparent);
+  border-radius: var(--radius-sm);
 }
 
 /* Символьный режим: активный токен разобран на знаки, остальной текст цел. */
@@ -359,6 +490,44 @@ a {
   font-family: var(--han);
   font-size: 1.4rem;
   margin-bottom: var(--space-5);
+}
+
+.reader__title:lang(en) {
+  font-family: var(--serif);
+}
+
+/* --- предложение перевода --- */
+
+/* Кликабельная единица: тап запускает озвучку с этой фразы. Курсор и цель для
+   пальца — у всей фразы, а не у отдельной кнопки: кнопка внутри абзаца рвала
+   бы строку, а фраза и так занимает целую. Фокуса у неё нет намеренно — см.
+   шапку TranslationText.tsx. */
+.sn {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+/* Перевода этой фразы нет — показан оригинал. Приглушённый и курсивом, чтобы
+   отличие было видно до того, как читатель начнёт разбирать чужой язык. */
+.sn--raw {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* --- переход к следующей главе --- */
+
+.chapternav {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border);
+}
+
+.chapternav .button {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
 }
 
 /* --- подсказка по удержанию --- */
@@ -437,6 +606,18 @@ a {
   font-family: var(--han);
   font-size: 1.6rem;
   font-weight: 600;
+}
+
+/* Английское слово в заголовке карточки набирается обычным шрифтом: CJK-
+   гарнитура рисует латиницу моноширинной и не той толщины. */
+.panel__term:lang(en),
+.peek__term:lang(en),
+.word__han:lang(en) {
+  font-family: var(--sans);
+}
+
+.word__context:lang(en) {
+  font-family: var(--serif);
 }
 
 .panel__kind {

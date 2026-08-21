@@ -19,6 +19,7 @@ from app.config import settings
 from app.db.session import SessionLocal
 from app.fetchers.browser import BrowserFetcher
 from app.lang.segment import Segmenter
+from app.providers.speech import YandexSpeech
 from app.providers.translate import YandexTranslate
 
 log = logging.getLogger(__name__)
@@ -31,10 +32,13 @@ logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Общие на процесс ресурсы: браузер, словарь сегментатора, переводчик.
+    """Общие на процесс ресурсы: браузер, словарь сегментатора, переводчик, синтез.
 
     Браузер здесь только создаётся — стартует он при первой загрузке, чтобы
     приложение поднималось и на машине без Xvfb.
+
+    Сегментатор один и он китайский: английскому словарь для резки не нужен
+    вовсе (`lang/segment_en.py`), поэтому второго объекта здесь нет.
     """
     app.state.session_factory = SessionLocal
     app.state.segmenter = Segmenter(settings.userdict_path)
@@ -48,12 +52,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.translator = None
         log.warning("переводчик не настроен: главы будут доходить до segmented")
 
+    if settings.speech_api_key and settings.yc_folder_id:
+        app.state.synthesizer = YandexSpeech()
+    else:
+        # Ровно та же логика, что у переводчика: без ключа глава читается,
+        # просто не звучит. Кнопка озвучки при этом гаснет, а не отказывает.
+        app.state.synthesizer = None
+        log.warning("озвучка не настроена: перевод будет читаться глазами")
+
     try:
         yield
     finally:
         await app.state.fetcher.close()
         if app.state.translator is not None:
             await app.state.translator.close()
+        if app.state.synthesizer is not None:
+            await app.state.synthesizer.close()
 
 
 app = FastAPI(title="chinese_reader", version="0.1.0", lifespan=lifespan)

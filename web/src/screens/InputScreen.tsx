@@ -8,6 +8,15 @@
  * Отказ показывается здесь же, с человеческим объяснением и кнопкой повтора.
  * Повтор — это тот же `POST`: глава в `failed` перезапускается (RFC §4), так
  * что фронту не нужно помнить, чем повтор отличается от первого раза.
+ *
+ * Поле «и ещё N глав» — вход в книгу целиком. Оглавления у английского
+ * источника из разметки не достать (sources.md §2), поэтому книга обходится по
+ * ссылкам «следующая глава», и просить их надо счётом, а не адресом каждой.
+ * Ноль по умолчанию: обход — решение читателя, а не побочное действие ссылки.
+ *
+ * Уходим читать по первой готовой главе, не дожидаясь остальных: обход идёт
+ * фоном и по две секунды на страницу, а первая глава к этому моменту уже на
+ * экране. Ждать её соседей — значит смотреть на спиннер вместо чтения.
  */
 
 import { useEffect, useState } from 'react'
@@ -17,8 +26,12 @@ import { describeStatus } from '../errors'
 import { navigate } from '../router'
 import { useChapter } from '../useChapter'
 
+/** Потолок обхода. Совпадает с `max_chapters_per_run` на бэкенде. */
+const MAX_FOLLOW = 20
+
 export function InputScreen() {
   const [url, setUrl] = useState('')
+  const [follow, setFollow] = useState(0)
   const [chapterId, setChapterId] = useState<number | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<ApiError | null>(null)
@@ -38,7 +51,7 @@ export function InputScreen() {
     setSending(true)
     setSendError(null)
     try {
-      const accepted = await api.createChapter(target)
+      const accepted = await api.createChapter(target, follow)
       setChapterId(accepted.id)
       if (accepted.id === chapterId) await reload()
     } catch (e) {
@@ -72,11 +85,32 @@ export function InputScreen() {
             type="url"
             inputMode="url"
             autoComplete="url"
-            placeholder="https://51shucheng.net/…"
+            placeholder="https://51shucheng.net/… или https://novelarrow.com/…"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             disabled={busy}
           />
+        </div>
+
+        <div className="field">
+          <label className="label" htmlFor="follow">
+            И ещё глав подряд
+          </label>
+          <input
+            id="follow"
+            className="input input--narrow"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={MAX_FOLLOW}
+            value={follow}
+            onChange={(e) => setFollow(Math.min(MAX_FOLLOW, Math.max(0, Number(e.target.value))))}
+            disabled={busy}
+          />
+          <span className="muted label">
+            Сервис пойдёт вперёд по ссылкам «следующая глава». Уже загруженные он
+            перешагивает, на сайт за ними не ходит.
+          </span>
         </div>
 
         <button className="button" type="submit" disabled={busy || !url.trim()}>

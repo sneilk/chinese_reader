@@ -44,6 +44,14 @@ export interface ChapterIndex {
   /** Границы предложений в единицах JS-строки. */
   sentenceStart: Int32Array
   sentenceEnd: Int32Array
+  /**
+   * Номера предложений в каждом абзаце — по ним строится вид «перевод».
+   *
+   * Считается по токенам, а не разбором текста заново: абзацы и предложения
+   * уже разложены здесь, и второй способ узнать то же самое рано или поздно
+   * разошёлся бы с первым.
+   */
+  paragraphSentences: number[][]
 }
 
 /**
@@ -142,6 +150,17 @@ export function buildIndex(content: string, tokens: Token[], sentences: Sentence
     }
   })
 
+  const paragraphSentences = paragraphs.map((paragraph) => {
+    const found: number[] = []
+    for (const token of paragraph.tokens) {
+      const s = sentenceOf[token.i]
+      // Подряд идущие токены одного предложения дают один номер — берём
+      // только смену, поэтому порядок сохраняется без сортировки и Set.
+      if (s >= 0 && s !== found[found.length - 1]) found.push(s)
+    }
+    return found
+  })
+
   return {
     paragraphs,
     tokens: refs,
@@ -150,6 +169,7 @@ export function buildIndex(content: string, tokens: Token[], sentences: Sentence
     lastToken,
     sentenceStart,
     sentenceEnd,
+    paragraphSentences,
   }
 }
 
