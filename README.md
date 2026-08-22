@@ -91,7 +91,13 @@ PYTHONPATH=. .venv/bin/python scripts/import_endict.py <файл.dsl>
 ```
 
 Проверки: `.venv/bin/python -m pytest` и `.venv/bin/ruff check .` в `backend/`,
-`npm run build` и `npm run lint` в `web/`.
+`npm test`, `npm run build` и `npm run lint` в `web/`.
+
+Тесты фронта покрывают чистую логику и запускаются без DOM: браузерного
+окружения нет намеренно. Жесты держатся на pointer-событиях и
+`elementFromPoint`, которых в jsdom всё равно нет, — их проверяют руками в
+браузере, а тесты сторожат то, что ломается **молча**: перевод офсетов из
+кодовых точек в единицы UTF-16, границы предложений и разбор отказов API.
 
 ## Развёртывание
 
