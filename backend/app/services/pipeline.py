@@ -334,6 +334,57 @@ async def translate_chapter(
     return chapter
 
 
+def recover_interrupted(session: Session) -> tuple[int, int]:
+    """Починить главы, чью загрузку оборвал перезапуск. Возвращает (сколько, сколько).
+
+    Фоновая задача живёт в процессе и перезапуск не переживает, а перезапуск —
+    не редкость: им заканчивается каждая выкладка. Оборванная на середине глава
+    остаётся в `fetching` или `translating`, то есть в состоянии «работа идёт»,
+    хотя работать уже некому.
+
+    Это тот самый вечный спиннер, ради которого конвейер ловит все исключения
+    (см. шапку модуля), — только приходящий с другой стороны. И выхода из него
+    у читателя нет: `POST /api/chapters` перезапускает главу в `failed`, а
+    застрявшую в `fetching` считает уже загружаемой и не трогает.
+
+    Разбор по состояниям здесь тот же, что и везде: где проходит граница
+    читаемости, там и разница. До `segmented` показывать нечего — глава уходит
+    в `failed`, откуда её вернёт обычный повтор. После — текст и разметка уже в
+    базе, поэтому глава остаётся читаемой без переводов, а дозалить их можно
+    кнопкой.
+    """
+    stale = (
+        session.execute(
+            select(Chapter).where(
+                Chapter.status.in_((ChapterStatus.FETCHING, ChapterStatus.TRANSLATING))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not stale:
+        return 0, 0
+
+    failed = readable = 0
+    for chapter in stale:
+        chapter.error_kind = ErrorKind.INTERRUPTED
+        chapter.error_detail = "загрузку оборвал перезапуск сервиса"
+        if chapter.status == ChapterStatus.FETCHING:
+            chapter.status = ChapterStatus.FAILED
+            failed += 1
+        else:
+            chapter.status = ChapterStatus.SEGMENTED
+            readable += 1
+
+    session.commit()
+    log.warning(
+        "после перезапуска: %s глав(ы) помечены прерванными, %s остались читаемыми",
+        failed,
+        readable,
+    )
+    return failed, readable
+
+
 async def walk_chapters(
     session: Session,
     chapter: Chapter,

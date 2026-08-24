@@ -1,7 +1,7 @@
 """Проверяем не ORM, а те ограничения схемы, на которые опирается логика."""
 
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,9 +22,27 @@ def session(tmp_path):
         yield s
 
 
+def _book(session, key="https://example.com/") -> Document:
+    """Книга по ключу: существующая или новая.
+
+    Переиспользование здесь не оптимизация, а условие честности соседних
+    тестов. Заводи помощник новую книгу на каждый вызов — и проверка
+    уникальности URL главы падала бы на `uq_documents_key`, то есть проходила
+    бы, ничего не проверив.
+    """
+    document = session.scalars(select(Document).where(Document.key == key)).first()
+    if document is None:
+        document = Document(
+            source=Source(kind="web", site="example.com", lang="zh"),
+            key=key,
+            title="книга",
+            lang="zh",
+        )
+    return document
+
+
 def _chapter(session, url="https://example.com/1.html") -> Chapter:
-    src = Source(kind="web", site="example.com", lang="zh")
-    doc = Document(source=src, title="книга", lang="zh")
+    doc = _book(session, url.rsplit("/", 1)[0] + "/")
     ch = Chapter(document=doc, url=url, title="глава", status=ChapterStatus.FETCHING)
     session.add(ch)
     session.commit()
@@ -36,6 +54,30 @@ def test_url_unique(session):
     _chapter(session)
     with pytest.raises(IntegrityError):
         _chapter(session)
+
+
+def test_document_key_unique(session):
+    """Одна книга — одна запись, иначе её главы разъедутся по двум спискам."""
+    session.add(_book(session, "https://example.com/kniga/"))
+    session.commit()
+
+    session.add(
+        Document(
+            source=Source(kind="web", site="example.com", lang="zh"),
+            key="https://example.com/kniga/",
+            lang="zh",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_chapters_of_one_book_may_share_a_document(session):
+    """Ограничение стоит на книге, а не на её главах: их в книге много."""
+    first = _chapter(session, "https://example.com/kniga/1.html")
+    second = _chapter(session, "https://example.com/kniga/2.html")
+
+    assert first.document_id == second.document_id
 
 
 def test_status_check_constraint(session):

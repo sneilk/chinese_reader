@@ -15,10 +15,12 @@ from __future__ import annotations
 from fastapi import APIRouter
 from sqlalchemy import func, select
 
-from app.api.deps import SessionDep
-from app.api.schemas import DiagnosticsOut
+from app.api.deps import SessionDep, SynthesizerDep
+from app.api.schemas import DiagnosticsOut, SpeechCheckOut
 from app.config import settings
 from app.db.models import Chapter, DictEntry, Sentence, UserWord
+from app.domain import ErrorKind
+from app.providers.speech import SpeechFailure
 from app.services.budget import chars_this_month, speech_chars_this_month
 from app.services.speech import cache_size_bytes
 
@@ -58,6 +60,33 @@ def read_diagnostics(session: SessionDep) -> DiagnosticsOut:
         tts_cache_bytes=cache_size_bytes(),
         browser_profile_exists=settings.browser_profile_dir.exists(),
         browser_headless=settings.browser_headless,
+    )
+
+
+@router.post("/diagnostics/speech-check", response_model=SpeechCheckOut)
+async def check_speech(synthesizer: SynthesizerDep) -> SpeechCheckOut:
+    """Озвучить одно слово и сказать, что из этого вышло.
+
+    Единственное на этом экране, чего нельзя узнать, не попробовав. «Ключ
+    задан» проверяется чтением настроек и горит зелёным даже тогда, когда
+    работать не будет: ключ может быть от того же сервисного аккаунта, что и у
+    переводчика, а роль `ai.speechkit-tts.user` ему не выдана — и синтез
+    ответит 403 при первом же нажатии «Слушать».
+
+    Поэтому это POST, а не GET: проверка тратит деньги — восемь символов по
+    тарифу синтеза — и должна происходить по решению, а не при открытии экрана.
+    """
+    if synthesizer is None:
+        return SpeechCheckOut(ok=False, kind=ErrorKind.SPEECH_FAILED, detail="ключ не задан")
+
+    try:
+        result = await synthesizer.synthesize("проверка")
+    except SpeechFailure as e:
+        return SpeechCheckOut(ok=False, kind=ErrorKind.SPEECH_FAILED, detail=e.detail[:300])
+
+    return SpeechCheckOut(
+        ok=True,
+        detail=f"голос {synthesizer.voice}, {len(result.audio) // 1024} КБ",
     )
 
 

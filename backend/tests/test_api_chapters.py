@@ -327,3 +327,100 @@ def test_pipeline_without_translator_stops_at_segmented(env):
     assert got["status"] == ChapterStatus.SEGMENTED
     assert got["error"] is None
     assert got["content"]
+
+
+# --- условный запрос ---
+#
+# Пока идёт перевод, клиент опрашивает статус каждые полторы секунды, а глава
+# весит под сотню килобайт. Метка версии превращает этот опрос в 304 без тела:
+# содержимое клиент достаёт из своего кэша, а по сети едут заголовки.
+#
+# Ошибка здесь опаснее, чем кажется: слишком «стабильная» метка означает, что
+# читатель смотрит на «перевожу…» уже поверх готовой главы и не узнает об этом,
+# пока не перезагрузит страницу руками.
+
+
+def test_response_carries_an_etag(env):
+    client, _, _ = env
+    chapter_id = client.post("/api/chapters", json={"url": URL}).json()["id"]
+
+    r = client.get(f"/api/chapters/{chapter_id}")
+
+    assert r.status_code == 200
+    assert r.headers["etag"]
+    # Ревалидация обязана идти каждый раз: содержимое меняется по ходу работы.
+    assert r.headers["cache-control"] == "no-cache"
+
+
+def test_unchanged_chapter_answers_304_without_body(env):
+    client, _, _ = env
+    chapter_id = client.post("/api/chapters", json={"url": URL}).json()["id"]
+    etag = client.get(f"/api/chapters/{chapter_id}").headers["etag"]
+
+    again = client.get(f"/api/chapters/{chapter_id}", headers={"if-none-match": etag})
+
+    assert again.status_code == 304
+    assert again.content == b""
+    assert again.headers["etag"] == etag
+
+
+def test_stale_etag_gets_the_whole_chapter(env):
+    client, _, _ = env
+    chapter_id = client.post("/api/chapters", json={"url": URL}).json()["id"]
+
+    # Значение заголовка обязано быть ASCII — это требование самого HTTP.
+    r = client.get(f"/api/chapters/{chapter_id}", headers={"if-none-match": '"stale"'})
+
+    assert r.status_code == 200
+    assert r.json()["content"]
+
+
+def test_etag_changes_when_translation_arrives(env, factory):
+    """Переводы живут в sentences, и строка главы при этом не меняется вовсе."""
+    client, _, translator = env
+    translator.failure = TranslateFailure("отказ")
+    chapter_id = client.post("/api/chapters", json={"url": URL}).json()["id"]
+    before = client.get(f"/api/chapters/{chapter_id}").headers["etag"]
+
+    translator.failure = None
+    client.post(f"/api/chapters/{chapter_id}/translate")
+
+    assert client.get(f"/api/chapters/{chapter_id}").headers["etag"] != before
+
+
+def test_etag_changes_when_next_chapter_is_loaded(env, factory):
+    """`next_chapter_id` — факт о соседней главе, а не свойство этой."""
+    from app.db.models import Chapter as ChapterModel
+
+    client, _, _ = env
+    chapter_id = client.post("/api/chapters", json={"url": URL}).json()["id"]
+    with factory() as session:
+        session.get(ChapterModel, chapter_id).next_chapter_url = OTHER_URL
+        session.commit()
+
+    before = client.get(f"/api/chapters/{chapter_id}").headers["etag"]
+    client.post("/api/chapters", json={"url": OTHER_URL})
+
+    assert client.get(f"/api/chapters/{chapter_id}").headers["etag"] != before
+
+
+def test_different_chapters_have_different_etags(env):
+    client, _, _ = env
+    first = client.post("/api/chapters", json={"url": URL}).json()["id"]
+    second = client.post("/api/chapters", json={"url": OTHER_URL}).json()["id"]
+
+    assert (
+        client.get(f"/api/chapters/{first}").headers["etag"]
+        != client.get(f"/api/chapters/{second}").headers["etag"]
+    )
+
+
+def test_etag_is_stable_between_identical_requests(env):
+    """Иначе 304 не случится никогда и вся затея бессмысленна."""
+    client, _, _ = env
+    chapter_id = client.post("/api/chapters", json={"url": URL}).json()["id"]
+
+    first = client.get(f"/api/chapters/{chapter_id}").headers["etag"]
+    second = client.get(f"/api/chapters/{chapter_id}").headers["etag"]
+
+    assert first == second

@@ -25,6 +25,7 @@ const KINDS: ErrorKind[] = [
   'adapter_error',
   'translate_failed',
   'speech_failed',
+  'interrupted',
   'budget_exceeded',
   'bad_request',
 ]
@@ -68,6 +69,11 @@ describe('describeError', () => {
     expect(describeError('challenge').retryable).toBe(true)
     expect(describeError('budget_exceeded').retryable).toBe(false)
     expect(describeError('empty_extract').retryable).toBe(false)
+  })
+
+  it('прерванная перезапуском загрузка чинится ровно повтором', () => {
+    // Ни сайт, ни провайдер тут ни при чём — глава просто попала под выкладку.
+    expect(describeError('interrupted').retryable).toBe(true)
   })
 })
 

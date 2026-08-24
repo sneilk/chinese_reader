@@ -26,15 +26,30 @@ import { describeStatus } from '../errors'
 import { navigate } from '../router'
 import { useChapter } from '../useChapter'
 
-/** Потолок обхода. Совпадает с `max_chapters_per_run` на бэкенде. */
-const MAX_FOLLOW = 20
+/**
+ * Потолок обхода до ответа сервера. Не вторая копия настройки, а значение на
+ * те полсекунды, пока не приехало настоящее: держать его константой значило бы
+ * однажды предложить поле шире, чем примут в ответ.
+ */
+const FALLBACK_FOLLOW = 20
 
 export function InputScreen() {
   const [url, setUrl] = useState('')
   const [follow, setFollow] = useState(0)
+  const [maxFollow, setMaxFollow] = useState(FALLBACK_FOLLOW)
   const [chapterId, setChapterId] = useState<number | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<ApiError | null>(null)
+
+  // Предел спрашиваем у сервера: он же его и применяет. Ручка живости дешёвая —
+  // в отличие от диагностики, которая считает статьи в словаре на три миллиона
+  // строк. Отказ глушим: без предела экран работает, просто с догадкой.
+  useEffect(() => {
+    api
+      .health()
+      .then((health) => setMaxFollow(health.limits.max_chapters_per_run))
+      .catch(() => undefined)
+  }, [])
 
   const { chapter, requestError, reload } = useChapter(chapterId)
 
@@ -102,9 +117,9 @@ export function InputScreen() {
             type="number"
             inputMode="numeric"
             min={0}
-            max={MAX_FOLLOW}
+            max={maxFollow}
             value={follow}
-            onChange={(e) => setFollow(Math.min(MAX_FOLLOW, Math.max(0, Number(e.target.value))))}
+            onChange={(e) => setFollow(Math.min(maxFollow, Math.max(0, Number(e.target.value))))}
             disabled={busy}
           />
           <span className="muted label">

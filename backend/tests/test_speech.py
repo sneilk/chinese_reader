@@ -11,6 +11,9 @@
 молча — заметить это можно только на слух.
 """
 
+import os
+from pathlib import Path
+
 import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -20,7 +23,12 @@ from app.db.base import Base
 from app.db.models import Chapter, Document, Sentence, Source, SpeechUsage
 from app.providers.speech import SpeechFailure, SpeechResult
 from app.services import budget
-from app.services.speech import audio_for_sentence, cache_path, cache_size_bytes
+from app.services.speech import (
+    audio_for_sentence,
+    cache_path,
+    cache_size_bytes,
+    prune_cache,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -60,7 +68,7 @@ def session(tmp_path):
 @pytest.fixture
 def chapter(session) -> Chapter:
     source = Source(kind="web", site="example.com", lang="en")
-    document = Document(source=source, lang="en")
+    document = Document(source=source, key="https://example.com/", lang="en")
     chapter = Chapter(document=document, url="https://example.com/1", lang="en", content=CONTENT)
     chapter.sentences.append(Sentence(idx=0, start_offset=0, end_offset=27))
     session.add(chapter)
@@ -206,3 +214,73 @@ async def test_provider_failure_does_not_record_usage(session, chapter, sentence
         await audio_for_sentence(session, chapter, sentence, synth)
 
     assert usage_rows(session) == 0
+
+
+# --- потолок кэша ---
+#
+# Кэш вечный по смыслу, но диск конечен: книга в полтысячи глав озвучивается в
+# гигабайты, а рядом на том же диске база и семь её копий. Выброшенный файл при
+# этом не потерян — он стоит одного повторного синтеза, и только если к той
+# главе вернутся.
+
+
+def _cached(name: str, size: int, touched: float) -> Path:
+    path = settings.tts_cache_dir / name[:2] / f"{name}.mp3"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"x" * size)
+    os.utime(path, (touched, touched))
+    return path
+
+
+def test_cache_under_the_limit_is_left_alone():
+    _cached("aa", 100, 1_000_000)
+
+    assert prune_cache(max_bytes=1000) == (0, 0)
+    assert cache_size_bytes() == 100
+
+
+def test_oldest_go_first():
+    old = _cached("aa", 100, 1_000_000)
+    new = _cached("bb", 100, 2_000_000)
+
+    removed, freed = prune_cache(max_bytes=150)
+
+    assert (removed, freed) == (1, 100)
+    assert not old.exists()
+    assert new.exists(), "к недавнему вернутся скорее, чем к позапрошлогоднему"
+
+
+def test_prunes_until_it_fits():
+    for i, stamp in enumerate((1_000_000, 2_000_000, 3_000_000, 4_000_000)):
+        _cached(f"{i}{i}", 100, stamp)
+
+    removed, freed = prune_cache(max_bytes=250)
+
+    assert (removed, freed) == (2, 200)
+    assert cache_size_bytes() == 200
+
+
+def test_zero_limit_means_no_pruning():
+    """Ноль — это «потолка нет», а не «выбросить всё»: так же читается и бюджет."""
+    _cached("aa", 100, 1_000_000)
+
+    assert prune_cache(max_bytes=0) == (0, 0)
+    assert cache_size_bytes() == 100
+
+
+def test_missing_cache_directory_is_not_an_error():
+    assert prune_cache(max_bytes=10) == (0, 0)
+    assert cache_size_bytes() == 0
+
+
+async def test_pruned_file_is_synthesized_again(session, chapter, sentence):
+    """Выброшенный файл не потерян — он стоит одного повторного синтеза."""
+    synth = FakeSynthesizer()
+    path, _ = await audio_for_sentence(session, chapter, sentence, synth)
+    prune_cache(max_bytes=1)
+    assert not path.exists()
+
+    again, _ = await audio_for_sentence(session, chapter, sentence, synth)
+
+    assert again.exists()
+    assert len(synth.seen) == 2

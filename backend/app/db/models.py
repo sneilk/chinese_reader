@@ -69,12 +69,21 @@ class Source(Base):
 
 
 class Document(Base):
-    """Книга. В MVP заводится по одной главе, но глава без книги не бывает."""
+    """Книга.
+
+    `key` — адрес книги на сайте: URL главы без последнего сегмента. Своего
+    ключа у книги в MVP не было (RFC §7), и главы группировались перебором
+    соседей с общим префиксом. Пока книга заводилась одной главой, это стоило
+    ровно ничего; с обходом цепочкой книга стала настоящей сущностью — у неё
+    появились порядок, границы и список, — и опознавать её сканированием
+    соседей значит каждый раз выводить заново то, что известно.
+    """
 
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source_id: Mapped[int] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"))
+    key: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
     title: Mapped[str | None] = mapped_column(String(512))
     lang: Mapped[str] = mapped_column(String(8), nullable=False, default="zh")
     created_at: Mapped[datetime] = _created()

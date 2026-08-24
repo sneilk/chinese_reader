@@ -16,6 +16,8 @@ import { hrefFor, parseRoute, type Route } from './router'
 describe('parseRoute', () => {
   it.each([
     ['#/chapter/12', { name: 'chapter', id: 12 }],
+    ['#/books', { name: 'books' }],
+    ['#/books/3', { name: 'book', id: 3 }],
     ['#/words', { name: 'words' }],
     ['#/diagnostics', { name: 'diagnostics' }],
     ['#/', { name: 'input' }],
@@ -23,6 +25,15 @@ describe('parseRoute', () => {
   ] as [string, Route][])('%s → %o', (hash, expected) => {
     expect(parseRoute(hash)).toEqual(expected)
   })
+
+  it.each(['#/books/abc', '#/books/0', '#/books/'])(
+    'мусор в номере книги (%s) даёт список, а не пустоту',
+    (hash) => {
+      // Список — осмысленный ответ на «покажи книгу, которой нет»: с него
+      // видно все остальные.
+      expect(parseRoute(hash)).toEqual({ name: 'books' })
+    },
+  )
 
   it('терпит адрес без ведущего слэша', () => {
     expect(parseRoute('#chapter/7')).toEqual({ name: 'chapter', id: 7 })
@@ -50,6 +61,8 @@ describe('parseRoute', () => {
 describe('hrefFor', () => {
   it.each([
     [{ name: 'chapter', id: 12 }, '#/chapter/12'],
+    [{ name: 'books' }, '#/books'],
+    [{ name: 'book', id: 3 }, '#/books/3'],
     [{ name: 'words' }, '#/words'],
     [{ name: 'diagnostics' }, '#/diagnostics'],
     [{ name: 'input' }, '#/'],
@@ -62,6 +75,8 @@ describe('разбор и сборка', () => {
   it.each([
     { name: 'chapter', id: 1 },
     { name: 'chapter', id: 9999 },
+    { name: 'books' },
+    { name: 'book', id: 3 },
     { name: 'words' },
     { name: 'diagnostics' },
     { name: 'input' },

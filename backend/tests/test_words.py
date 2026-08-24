@@ -51,7 +51,7 @@ def client(factory):
 @pytest.fixture
 def chapter(session) -> Chapter:
     src = Source(kind="web", site="51shucheng.net", lang="zh")
-    doc = Document(source=src, title="книга", lang="zh")
+    doc = Document(source=src, key="https://51shucheng.net/renwen/kniga/", title="книга", lang="zh")
     ch = Chapter(
         document=doc,
         url="https://51shucheng.net/renwen/kniga/1.html",

@@ -9,7 +9,7 @@
 """
 
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
@@ -18,7 +18,7 @@ from app.domain import ChapterStatus, ErrorKind
 from app.fetchers.base import FetchFailure, FetchResult
 from app.lang.segment import Segmenter
 from app.providers.translate import TranslateFailure, TranslateResult
-from app.services.pipeline import run_chapter_pipeline, translate_chapter
+from app.services.pipeline import recover_interrupted, run_chapter_pipeline, translate_chapter
 
 pytestmark = pytest.mark.anyio
 
@@ -69,7 +69,7 @@ def session(tmp_path):
 @pytest.fixture
 def chapter(session) -> Chapter:
     src = Source(kind="web", site="51shucheng.net", lang="zh")
-    doc = Document(source=src, title="книга", lang="zh")
+    doc = Document(source=src, key="https://51shucheng.net/renwen/kniga/", title="книга", lang="zh")
     ch = Chapter(document=doc, url=URL, status=ChapterStatus.FETCHING)
     session.add(ch)
     session.commit()
@@ -286,3 +286,81 @@ async def test_rerun_does_not_duplicate_sentences(session, chapter, segmenter):
 
     assert len(chapter.sentences) == first
     assert session.query(Sentence).count() == first
+
+
+# --- уборка после перезапуска ---
+#
+# Фоновая задача живёт в процессе и перезапуск не переживает, а перезапуском
+# заканчивается каждая выкладка. Без этой уборки оборванная глава остаётся в
+# состоянии «работа идёт», хотя работать уже некому, — и выхода из него у
+# читателя нет: повторный POST перезапускает только главу в `failed`.
+
+
+def _stuck(session, url: str, status: ChapterStatus, **fields) -> Chapter:
+    document = session.scalars(select(Document)).first()
+    chapter = Chapter(document=document, url=url, status=status, **fields)
+    session.add(chapter)
+    session.commit()
+    return chapter
+
+
+def test_interrupted_fetch_becomes_failed(session, chapter):
+    """До segmented показывать нечего — глава уходит в отказ, откуда есть повтор."""
+    failed, readable = recover_interrupted(session)
+
+    assert (failed, readable) == (1, 0)
+    assert chapter.status == ChapterStatus.FAILED
+    assert chapter.error_kind == ErrorKind.INTERRUPTED
+    assert chapter.error_detail
+
+
+def test_interrupted_translation_stays_readable(session, chapter):
+    """Текст и разметка уже в базе: глава читается, не хватает только переводов."""
+    chapter.status = ChapterStatus.TRANSLATING
+    chapter.content = "天很黑。"
+    session.commit()
+
+    failed, readable = recover_interrupted(session)
+
+    assert (failed, readable) == (0, 1)
+    assert chapter.status == ChapterStatus.SEGMENTED
+    assert chapter.error_kind == ErrorKind.INTERRUPTED
+    assert chapter.content == "天很黑。"
+
+
+@pytest.mark.parametrize(
+    "status", [ChapterStatus.READY, ChapterStatus.SEGMENTED, ChapterStatus.FAILED]
+)
+def test_finished_chapters_are_left_alone(session, chapter, status):
+    """Конечное состояние — это результат, а не брошенная работа."""
+    chapter.status = status
+    session.commit()
+
+    assert recover_interrupted(session) == (0, 0)
+    assert chapter.status == status
+    assert chapter.error_kind is None
+
+
+def test_counts_both_kinds(session, chapter):
+    chapter.status = ChapterStatus.TRANSLATING
+    session.commit()
+    _stuck(session, "https://51shucheng.net/renwen/kniga/2.html", ChapterStatus.FETCHING)
+    _stuck(session, "https://51shucheng.net/renwen/kniga/3.html", ChapterStatus.FETCHING)
+
+    assert recover_interrupted(session) == (2, 1)
+
+
+def test_nothing_to_recover(session):
+    assert recover_interrupted(session) == (0, 0)
+
+
+async def test_recovered_chapter_can_be_retried(session, chapter, segmenter):
+    """Смысл уборки в этом: после неё обычный повтор снова работает."""
+    recover_interrupted(session)
+    assert chapter.status == ChapterStatus.FAILED
+
+    # Повтор — это тот же путь, каким глава грузится в первый раз.
+    await _run(session, chapter, segmenter, translator=FakeTranslator())
+
+    assert chapter.status == ChapterStatus.READY
+    assert chapter.error_kind is None

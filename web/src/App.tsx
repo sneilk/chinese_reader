@@ -5,7 +5,9 @@
  * словарь — T2.8.
  */
 
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { hrefFor, useRoute, type Route } from './router'
+import { BooksScreen } from './screens/BooksScreen'
 import { DiagnosticsScreen } from './screens/DiagnosticsScreen'
 import { InputScreen } from './screens/InputScreen'
 import { ReaderScreen } from './screens/ReaderScreen'
@@ -44,6 +46,12 @@ export default function App() {
         <NavLink route={{ name: 'input' }} active={route.name === 'input'}>
           Глава
         </NavLink>
+        <NavLink
+          route={{ name: 'books' }}
+          active={route.name === 'books' || route.name === 'book'}
+        >
+          Книги
+        </NavLink>
         <NavLink route={{ name: 'words' }} active={route.name === 'words'}>
           Словарь
         </NavLink>
@@ -53,10 +61,18 @@ export default function App() {
       </header>
 
       <main className={`content${reading ? ' content--reader' : ''}`}>
-        {route.name === 'input' && <InputScreen />}
-        {route.name === 'chapter' && <ReaderScreen id={route.id} />}
-        {route.name === 'words' && <WordsScreen />}
-        {route.name === 'diagnostics' && <DiagnosticsScreen />}
+        {/* Ключ по маршруту: граница, поймавшая ошибку, остаётся в этом
+            состоянии навсегда, и без сброса переход на соседний экран не
+            вывел бы из неё — читатель остался бы с сообщением о поломке,
+            которой на новом экране нет. */}
+        <ErrorBoundary key={route.name}>
+          {route.name === 'input' && <InputScreen />}
+          {route.name === 'chapter' && <ReaderScreen id={route.id} />}
+          {route.name === 'books' && <BooksScreen />}
+          {route.name === 'book' && <BooksScreen id={route.id} />}
+          {route.name === 'words' && <WordsScreen />}
+          {route.name === 'diagnostics' && <DiagnosticsScreen />}
+        </ErrorBoundary>
       </main>
     </div>
   )

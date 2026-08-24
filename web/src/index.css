@@ -849,6 +849,107 @@ a {
   color: var(--danger);
 }
 
+/* --- книги и оглавление --- */
+
+.books {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.book {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.book__link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  text-decoration: none;
+  /* 44px — минимальная цель для пальца. */
+  min-height: 44px;
+  justify-content: center;
+}
+
+/* Имя книги — это слаг из адреса, и он бывает длинным и без пробелов.
+   Переносим где придётся: обрезать нечего, других имён у книги нет. */
+.book__name {
+  color: var(--text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.book__meta {
+  font-size: 0.85rem;
+}
+
+.book__count {
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+
+.toc {
+  list-style: none;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+}
+
+.toc__row {
+  border-bottom: 1px solid var(--border);
+}
+
+/* Нечитаемая глава остаётся в списке: по нему должно быть видно, что она
+   есть и почему не открывается. Приглушена, но не спрятана. */
+.toc__row--dim {
+  opacity: 0.65;
+}
+
+.toc__link {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-3) 0;
+  min-height: 44px;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.toc__link--dead {
+  cursor: default;
+}
+
+.toc__number {
+  flex: none;
+  min-width: 2.5em;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+}
+
+.toc__title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.toc__state {
+  flex: none;
+  font-size: 0.85rem;
+}
+
+.toc__state--bad {
+  color: var(--warning);
+}
+
 /* --- состояние сервиса --- */
 
 .checks {
@@ -881,6 +982,28 @@ a {
   margin-top: var(--space-1);
   color: var(--warning);
   font-size: 0.9rem;
+}
+
+/* Проверка, которую нельзя сделать чтением настроек: она тратит деньги и
+   запускается нажатием. Кнопка и её итог стоят в одной строке — итог короткий,
+   а на узком экране переносится сам. */
+.check__probe {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  margin-top: var(--space-2);
+  font-size: 0.9rem;
+}
+
+.check__probe .button {
+  min-height: 36px;
+  padding: var(--space-1) var(--space-3);
+  font-size: 0.9rem;
+}
+
+.check__probe-ok {
+  color: var(--ok);
 }
 
 .check__footer {

@@ -4,12 +4,21 @@
 (RFC §4): за одной главой мы ходим на сайт один раз, а повторный запрос
 возвращает уже имеющуюся запись.
 
-Про книгу. В схеме у `documents` нет собственного ключа — ни slug, ни url
-(RFC §7), поэтому главы одной книги группируются по общему префиксу адреса:
-`/{жанр}/{книга}/{номер}.html` без последнего сегмента. Это работает без
-миграции и ровно настолько, насколько нужно MVP, где книга заводится одной
-главой. Когда появится оглавление целиком, ключ книги станет колонкой — тогда
-и переедем, а пока лишняя колонка была бы задел ради задела.
+Про книгу. Её ключ — адрес на сайте, то есть URL главы без последнего
+сегмента: `/{жанр}/{книга}/{номер}.html` → `/{жанр}/{книга}/`. Раньше он
+вычислялся на лету и книга опознавалась перебором соседей с общим префиксом;
+теперь он записан в `documents.key`, и опознание стало поиском по уникальному
+ключу вместо сканирования по `LIKE`.
+
+Про место главы в книге. `chapters.idx` — не номер главы на сайте, а её
+**позиция в известной нам цепочке**: вывести настоящий номер неоткуда, слаг
+главы у Next.js его не содержит. Отсчёт ведётся от первой загруженной главы
+книги, а каждая следующая встаёт за той, что на неё ссылается. Этого хватает
+на единственное, ради чего порядок нужен, — показать главы книги списком в том
+порядке, в каком их читают.
+
+Глава, загруженная в середину книги отдельной ссылкой, места не получает и
+остаётся без номера: врать про её положение хуже, чем не знать его.
 
 Про язык. При заведении он известен только предположительно — по адаптеру
 сайта, а у generic-адаптера и вовсе никак. Поэтому здесь ставится догадка, а
@@ -22,7 +31,7 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.adapters.registry import pick_adapter
@@ -57,17 +66,41 @@ def _get_or_create_source(session: Session, url: str, lang: Language) -> Source:
 
 
 def _get_or_create_document(session: Session, url: str, lang: Language) -> Document:
-    prefix = book_prefix(url)
-    # Книгу опознаём по любой её уже загруженной главе: своего ключа у
-    # documents нет, а url главы уникален и никуда не денется.
-    sibling = session.scalars(select(Chapter).where(Chapter.url.startswith(prefix))).first()
-    if sibling is not None:
-        return sibling.document
+    key = book_prefix(url)
+    document = session.scalars(select(Document).where(Document.key == key)).first()
+    if document is not None:
+        return document
 
-    document = Document(source=_get_or_create_source(session, url, lang), lang=lang)
+    document = Document(source=_get_or_create_source(session, url, lang), key=key, lang=lang)
     session.add(document)
     session.flush()
     return document
+
+
+def _place_in_book(session: Session, document: Document, url: str) -> int | None:
+    """Позиция главы в цепочке. `None` — определить её неоткуда.
+
+    Два случая, когда позиция известна. Первый: на эту главу уже кто-то
+    ссылается как на следующую — значит она идёт сразу за ним. Второй: книга
+    заводится этой главой, и она сама становится точкой отсчёта.
+
+    Всё остальное — глава, вставленная в середину книги отдельной ссылкой, —
+    остаётся без номера. Придумать его можно только из воздуха, а список глав
+    с выдуманным порядком хуже списка без порядка: по нему нельзя заметить,
+    что чего-то не хватает.
+    """
+    predecessor = session.scalars(
+        select(Chapter).where(
+            Chapter.document_id == document.id, Chapter.next_chapter_url == url
+        )
+    ).first()
+    if predecessor is not None and predecessor.idx is not None:
+        return predecessor.idx + 1
+
+    loaded = session.scalar(
+        select(func.count()).select_from(Chapter).where(Chapter.document_id == document.id)
+    )
+    return 0 if not loaded else None
 
 
 def get_or_create_chapter(session: Session, url: str) -> tuple[Chapter, bool]:
@@ -77,13 +110,15 @@ def get_or_create_chapter(session: Session, url: str) -> tuple[Chapter, bool]:
         return existing, False
 
     lang = guess_language(url)
+    document = _get_or_create_document(session, url, lang)
     chapter = Chapter(
-        document=_get_or_create_document(session, url, lang),
+        document=document,
         url=url,
         lang=lang,
+        idx=_place_in_book(session, document, url),
         status=ChapterStatus.FETCHING,
     )
     session.add(chapter)
     session.commit()
-    log.info("заведена глава %s (%s): %s", chapter.id, lang, url)
+    log.info("заведена глава %s (%s, №%s): %s", chapter.id, lang, chapter.idx, url)
     return chapter, True

@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.config import settings
+from app.services.speech import prune_cache
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger("backup")
@@ -124,6 +125,14 @@ def run(dest_dir: Path, keep: int, stamp: str | None = None) -> Path:
         log.info("профиль браузера упакован: %s", profile)
 
     rotate(dest_dir, "backup", keep)
+
+    # Кэш озвучки в копию не идёт — он восстановим синтезом, — но растёт на том
+    # же диске, что и копии. Ночь единственное время, когда обходить тысячи
+    # файлов не жалко, поэтому уборка живёт здесь, а не в самом сервисе.
+    removed, freed = prune_cache()
+    if removed:
+        log.info("кэш озвучки ужат: %s файлов, %s МБ", removed, freed // 1024 // 1024)
+
     return target
 
 

@@ -8,8 +8,10 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DatabaseError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api.books import router as books_router
 from app.api.chapters import router as chapters_router
 from app.api.diagnostics import router as diagnostics_router
 from app.api.health import router as health_router
@@ -21,6 +23,7 @@ from app.fetchers.browser import BrowserFetcher
 from app.lang.segment import Segmenter
 from app.providers.speech import YandexSpeech
 from app.providers.translate import YandexTranslate
+from app.services.pipeline import recover_interrupted
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +31,21 @@ log = logging.getLogger(__name__)
 # проставляет время и имя юнита. Дублировать их в формате значит читать
 # каждую строку дважды. Секретов в логах нет: ключ и куки не пишутся нигде.
 logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
+
+
+def _recover_interrupted() -> None:
+    """Починить главы, застрявшие в работе после прошлого запуска.
+
+    Падать здесь нельзя. База может быть не создана вовсе — на первом запуске
+    до `alembic upgrade`, — и отказ старта из-за уборки был бы хуже самого
+    мусора: сервис не поднялся бы вообще, а починить его через интерфейс,
+    который не работает, невозможно.
+    """
+    try:
+        with SessionLocal() as session:
+            recover_interrupted(session)
+    except DatabaseError as e:
+        log.warning("уборка после перезапуска пропущена, база не готова: %s", e)
 
 
 @asynccontextmanager
@@ -43,6 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.session_factory = SessionLocal
     app.state.segmenter = Segmenter(settings.userdict_path)
     app.state.fetcher = BrowserFetcher()
+    _recover_interrupted()
 
     if settings.yc_translate_api_key and settings.yc_folder_id:
         app.state.translator = YandexTranslate()
@@ -109,5 +128,6 @@ async def _validation_error(_request: Request, exc: RequestValidationError) -> J
 app.include_router(health_router, prefix="/api")
 app.include_router(diagnostics_router, prefix="/api")
 app.include_router(chapters_router, prefix="/api")
+app.include_router(books_router, prefix="/api")
 app.include_router(lookup_router, prefix="/api")
 app.include_router(words_router, prefix="/api")

@@ -92,9 +92,68 @@ async def audio_for_sentence(
     return path, result.content_type
 
 
-def cache_size_bytes() -> int:
-    """Сколько места занял кэш озвучки. Для экрана состояния."""
+def _cached_files() -> list[tuple[float, int, Path]]:
+    """Файлы кэша: (когда трогали, размер, путь).
+
+    «Когда трогали» — максимум из времени доступа и времени записи. Одного
+    `atime` мало: файловые системы монтируются с `relatime`, и у файла, который
+    ни разу не слушали, он равен времени создания — то есть ведёт себя как
+    `mtime`. Максимум делает величину монотонной в обоих случаях.
+    """
     root = settings.tts_cache_dir
     if not root.exists():
-        return 0
-    return sum(f.stat().st_size for f in root.rglob("*") if f.is_file())
+        return []
+
+    found: list[tuple[float, int, Path]] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        stat = path.stat()
+        found.append((max(stat.st_atime, stat.st_mtime), stat.st_size, path))
+    return found
+
+
+def cache_size_bytes() -> int:
+    """Сколько места занял кэш озвучки. Для экрана состояния."""
+    return sum(size for _, size, _ in _cached_files())
+
+
+def prune_cache(max_bytes: int | None = None) -> tuple[int, int]:
+    """Ужать кэш до потолка, выбрасывая давно не звучавшее. (файлов, байт).
+
+    Кэш вечный по смыслу: текст перевода не меняется, значит и его звучание
+    тоже, — но диск конечен, и книга в полтысячи глав озвучивается в гигабайты.
+    Рядом на том же диске лежат база и семь её копий, поэтому расти без предела
+    кэш не может.
+
+    Выбрасывается самое давно не звучавшее, и это дешевле, чем кажется:
+    выброшенный файл не потерян, а лишь стоит одного повторного синтеза — и
+    только если к той главе вернутся. Возвращаются же обычно к недавним.
+
+    Потолок не жёсткий: он проверяется в ночном обслуживании, а не при каждом
+    синтезе. Обходить тысячи файлов ради одного нового mp3 значило бы платить
+    за уборку чаще, чем за саму работу.
+    """
+    limit = settings.speech_cache_max_bytes if max_bytes is None else max_bytes
+    files = _cached_files()
+    total = sum(size for _, size, _ in files)
+    if limit <= 0 or total <= limit:
+        return 0, 0
+
+    # Давно не звучавшие — первыми на выход.
+    files.sort(key=lambda item: item[0])
+
+    removed = freed = 0
+    for _, size, path in files:
+        if total - freed <= limit:
+            break
+        try:
+            path.unlink()
+        except OSError as e:  # noqa: PERF203 — уборка не должна падать из-за одного файла
+            log.warning("не удалось убрать из кэша %s: %s", path.name, e)
+            continue
+        removed += 1
+        freed += size
+
+    log.info("кэш озвучки: убрано %s файлов, освобождено %s КБ", removed, freed // 1024)
+    return removed, freed

@@ -50,6 +50,50 @@ class ChapterAccepted(BaseModel):
     created: bool
 
 
+class BookOut(BaseModel):
+    """Книга в списке. Заголовка нет — его неоткуда взять, см. services/books.py."""
+
+    id: int
+    #: Адрес книги на сайте. Как показать его человеку, решает интерфейс.
+    key: str
+    lang: Language
+    site: str | None = None
+    chapters: int
+    #: Сколько глав уже можно открыть и читать.
+    readable: int
+
+
+class ChapterBrief(BaseModel):
+    """Глава в оглавлении: всё, что нужно, чтобы выбрать и открыть.
+
+    Ни текста, ни токенов: список из двадцати глав с их содержимым весил бы
+    больше, чем сама книга, а нужен он ради одного нажатия.
+    """
+
+    id: int
+    #: Место в цепочке; `None` — глава загружена отдельной ссылкой в середину.
+    idx: int | None = None
+    title: str | None = None
+    lang: Language
+    status: ChapterStatus
+    error: ErrorOut | None = None
+
+    @classmethod
+    def of(cls, chapter: Chapter) -> ChapterBrief:
+        return cls(
+            id=chapter.id,
+            idx=chapter.idx,
+            title=chapter.title,
+            lang=Language(chapter.lang),
+            status=ChapterStatus(chapter.status),
+            error=(
+                ErrorOut(kind=chapter.error_kind, message=chapter.error_detail or "")
+                if chapter.error_kind
+                else None
+            ),
+        )
+
+
 class SentenceOut(BaseModel):
     # `id` нужен, чтобы сохранённое слово ссылалось на конкретное предложение,
     # а не только на его текст (contexts.sentence_id).
@@ -111,6 +155,14 @@ class DiagnosticsOut(BaseModel):
     tts_cache_bytes: int
     browser_profile_exists: bool
     browser_headless: bool
+
+
+class SpeechCheckOut(BaseModel):
+    """Итог живой проверки синтеза: единственное здесь, что нельзя узнать чтением."""
+
+    ok: bool
+    kind: str | None = None
+    detail: str = ""
 
 
 class ContextIn(BaseModel):

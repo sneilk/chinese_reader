@@ -66,11 +66,17 @@ export function ReaderScreen({ id }: { id: number }) {
   const content = chapter?.content ?? ''
   const lang = chapter?.lang ?? 'zh'
 
-  // Индекс перестраивается только при смене главы: опрос статуса приносит
-  // тот же текст, и пересобирать 2500 токенов на каждый ответ незачем.
+  // Индекс перестраивается только при смене текста главы. Держать в
+  // зависимостях `tokens` и `sentences` нельзя, хотя тянет: разбор ответа даёт
+  // новые массивы на каждый опрос, и 2500 токенов раскладывались бы заново
+  // каждые полторы секунды, пока идёт перевод.
+  //
+  // Взамен достаточно канона: токены и границы предложений считаны по нему и
+  // без него не меняются. Переводы меняются — но в индекс они не входят.
   const index = useMemo(
     () => buildIndex(content, chapter?.tokens ?? [], chapter?.sentences ?? []),
-    [content, chapter?.tokens, chapter?.sentences],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- см. выше
+    [chapter?.id, content],
   )
 
   const speech = useSpeech(chapter)

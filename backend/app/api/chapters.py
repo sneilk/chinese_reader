@@ -13,11 +13,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.deps import (
     FactoryDep,
@@ -142,10 +143,37 @@ def create_chapter(
 
 
 @router.get("/chapters/{chapter_id}", response_model=ChapterOut)
-def read_chapter(chapter_id: int, session: SessionDep) -> ChapterOut:
-    """Глава целиком: статус, а начиная с `segmented` — текст, токены и переводы."""
+def read_chapter(
+    chapter_id: int, session: SessionDep, request: Request, response: Response
+) -> ChapterOut | Response:
+    """Глава целиком: статус, а начиная с `segmented` — текст, токены и переводы.
+
+    Отдавать главу целиком было верным решением для одного запроса (RFC §8) и
+    стало неверным для опроса: пока идёт перевод, клиент спрашивает статус
+    каждые полторы секунды и каждый раз получает те же девяносто килобайт
+    текста и токенов ради одной строки прогресса.
+
+    Чинится это не урезанием ответа, а условным запросом. Клиент присылает
+    `If-None-Match`, и если с прошлого раза ничего не изменилось, он получает
+    304 без тела — а браузер сам достаёт содержимое из своего кэша и отдаёт
+    коду как обычный ответ. Клиентского кода это не требует вовсе.
+
+    Считать метку по готовому ответу было бы поздно: к этому моменту токены уже
+    разобраны из JSON и сериализованы обратно. Поэтому она собирается из
+    дешёвых признаков — что меняется в главе, то в неё и входит.
+    """
     chapter = _get_or_404(session, chapter_id)
-    return ChapterOut.of(chapter, next_chapter_id=_next_chapter_id(session, chapter))
+    next_id = _next_chapter_id(session, chapter)
+    etag = _etag(session, chapter, next_id)
+
+    # Ревалидация на каждый запрос: содержимое меняется по ходу конвейера, и
+    # отдать его из кэша без спроса значило бы показать вчерашний статус.
+    headers = {"etag": etag, "cache-control": "no-cache"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+
+    response.headers.update(headers)
+    return ChapterOut.of(chapter, next_chapter_id=next_id)
 
 
 def _next_chapter_id(session: SessionDep, chapter: Chapter) -> int | None:
@@ -153,6 +181,30 @@ def _next_chapter_id(session: SessionDep, chapter: Chapter) -> int | None:
     if not chapter.next_chapter_url:
         return None
     return session.scalar(select(Chapter.id).where(Chapter.url == chapter.next_chapter_url))
+
+
+def _etag(session: SessionDep, chapter: Chapter, next_id: int | None) -> str:
+    """Метка версии ответа. Меняется ровно тогда, когда меняется его содержимое.
+
+    Одного `updated_at` главы не хватает: переводы живут в `sentences`, и по
+    ходу перевода строка главы не меняется вовсе. Поэтому в метку входит и
+    состояние переводов — иначе читатель смотрел бы на «перевожу…» до конца
+    главы, получая 304 на уже готовый текст.
+
+    `next_id` входит по той же причине: он не свойство главы, а факт о
+    соседней, и появляется он ровно тогда, когда её загрузили.
+    """
+    translated, last = session.execute(
+        select(func.count(Sentence.id), func.max(Sentence.translated_at)).where(
+            Sentence.chapter_id == chapter.id, Sentence.translation.is_not(None)
+        )
+    ).one()
+
+    raw = "|".join(
+        str(part)
+        for part in (chapter.id, chapter.updated_at, chapter.status, translated, last, next_id)
+    )
+    return f'"{hashlib.sha256(raw.encode()).hexdigest()[:32]}"'
 
 
 @router.post(

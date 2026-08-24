@@ -129,7 +129,7 @@ class FakeTranslator:
 @pytest.fixture
 def chapter(session) -> Chapter:
     src = Source(kind="web", site="example.com", lang="zh")
-    doc = Document(source=src, lang="zh")
+    doc = Document(source=src, key="https://example.com/", lang="zh")
     ch = Chapter(
         document=doc,
         url="https://example.com/1.html",

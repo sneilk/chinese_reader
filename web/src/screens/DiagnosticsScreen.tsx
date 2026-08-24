@@ -7,10 +7,16 @@
  * выглядит одинаково — «не работает», — а чинится по-разному.
  *
  * Поэтому здесь не таблица цифр, а список проверок с ответом «что делать».
+ *
+ * Одна проверка выбивается из ряда, и намеренно. Всё остальное здесь читается
+ * из настроек и базы, а озвучка так не проверяется: «ключ задан» верно и тогда,
+ * когда синтез ответит 403, — ключ может быть от того же сервисного аккаунта,
+ * что и у переводчика, без роли `ai.speechkit-tts.user`. Узнать это можно,
+ * только попробовав, поэтому рядом с ней стоит кнопка, а не галочка.
  */
 
 import { useEffect, useState } from 'react'
-import { ApiError, api, type Diagnostics } from '../api'
+import { ApiError, api, type Diagnostics, type SpeechCheck } from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 
 interface Check {
@@ -18,6 +24,8 @@ interface Check {
   ok: boolean
   detail: string
   advice?: string
+  /** Ключ проверки, которую можно выполнить вживую. */
+  probe?: 'speech'
 }
 
 function share(used: number, limit: number): number {
@@ -77,6 +85,7 @@ function buildChecks(d: Diagnostics): Check[] {
       advice:
         'Без ключа глава читается, но не звучит. Роль нужна своя — ai.speechkit-tts.user: ' +
         'с одной только ai.translate.user синтез отвечает 403.',
+      probe: 'speech',
     },
     {
       label: 'Профиль браузера',
@@ -106,6 +115,46 @@ function buildChecks(d: Diagnostics): Check[] {
       advice: 'Потолок свой, отдельно от перевода: тариф у синтеза другой.',
     },
   ]
+}
+
+/**
+ * Живая проверка синтеза: единственное здесь, что нельзя узнать чтением.
+ *
+ * Тратит деньги — восемь символов по тарифу — поэтому запускается нажатием, а
+ * не открытием экрана.
+ */
+function SpeechProbe() {
+  const [result, setResult] = useState<SpeechCheck | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  async function run() {
+    setBusy(true)
+    setResult(null)
+    try {
+      setResult(await api.speechCheck())
+    } catch (e) {
+      setResult({
+        ok: false,
+        kind: e instanceof ApiError ? e.kind : 'network',
+        detail: e instanceof ApiError ? e.message : String(e),
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="check__probe">
+      <button className="button button--quiet" type="button" onClick={() => void run()} disabled={busy}>
+        {busy ? 'Проверяю…' : 'Проверить голосом'}
+      </button>
+      {result && (
+        <span className={result.ok ? 'check__probe-ok' : 'check__advice'}>
+          {result.ok ? `Синтез работает: ${result.detail}` : result.detail}
+        </span>
+      )}
+    </div>
+  )
 }
 
 export function DiagnosticsScreen() {
@@ -160,6 +209,7 @@ export function DiagnosticsScreen() {
                 <span className="muted"> — {check.detail}</span>
               </div>
               {!check.ok && check.advice && <div className="check__advice">{check.advice}</div>}
+              {check.probe === 'speech' && <SpeechProbe />}
             </div>
           </li>
         ))}

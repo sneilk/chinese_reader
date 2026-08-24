@@ -34,6 +34,7 @@ export type ErrorKind =
   | 'adapter_error'
   | 'translate_failed'
   | 'speech_failed'
+  | 'interrupted'
   | 'budget_exceeded'
   | 'bad_request'
 
@@ -125,6 +126,46 @@ export interface ChapterAccepted {
   created: boolean
 }
 
+/**
+ * Книга в списке. Заголовка у неё нет и он не выдумывается: `<title>` страницы
+ * — это «Глава 12 — Книга | Сайт», а заголовок первой главы — имя главы, и
+ * подставить второе под первое значит назвать книгу именем её двенадцатой
+ * главы. Наружу едет адрес; как показать его человеку, решает интерфейс.
+ */
+export interface Book {
+  id: number
+  key: string
+  lang: Language
+  site: string | null
+  chapters: number
+  /** Сколько глав уже можно открыть и читать. */
+  readable: number
+}
+
+/** Глава в оглавлении: всё, что нужно, чтобы выбрать и открыть. Без текста. */
+export interface ChapterBrief {
+  id: number
+  /** Место в цепочке; `null` — глава загружена отдельной ссылкой в середину. */
+  idx: number | null
+  title: string | null
+  lang: Language
+  status: ChapterStatus
+  error: ApiErrorBody | null
+}
+
+/** Пределы, которые сервер объявляет клиенту, чтобы тот не предлагал невозможного. */
+export interface Health {
+  status: string
+  limits: { max_chapters_per_run: number }
+}
+
+/** Итог живой проверки синтеза: единственное, что нельзя узнать чтением настроек. */
+export interface SpeechCheck {
+  ok: boolean
+  kind: string | null
+  detail: string
+}
+
 export interface DictEntry {
   headword: string
   traditional: string | null
@@ -193,7 +234,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health: () => request<{ status: string }>('/health'),
+  /** Живость и объявленные сервером пределы. Дёшево: это не диагностика. */
+  health: () => request<Health>('/health'),
+
+  /** Книги со счётчиками глав, свежие сверху. */
+  books: () => request<Book[]>('/books'),
+
+  /** Оглавление книги в порядке чтения. Без текста глав. */
+  bookChapters: (bookId: number) => request<ChapterBrief[]>(`/books/${bookId}/chapters`),
 
   /**
    * Поставить главу в очередь. Идемпотентно: повтор не ходит на сайт.
@@ -247,6 +295,12 @@ export const api = {
 
   /** Состояние сервиса: что настроено, а что нет. */
   diagnostics: () => request<Diagnostics>('/diagnostics'),
+
+  /**
+   * Озвучить одно слово и сказать, что вышло. Тратит деньги, поэтому POST и
+   * только по нажатию: «ключ задан» горит зелёным и там, где не хватает роли.
+   */
+  speechCheck: () => request<SpeechCheck>('/diagnostics/speech-check', { method: 'POST' }),
 }
 
 /**

@@ -68,6 +68,13 @@ const MESSAGES: Record<string, ErrorInfo> = {
     retryable: true,
     readable: true,
   },
+  interrupted: {
+    title: 'Загрузку оборвал перезапуск',
+    advice:
+      'Сервис обновился, пока глава грузилась. Ни сайт, ни переводчик тут ни при чём — просто попробуйте ещё раз.',
+    retryable: true,
+    readable: false,
+  },
   budget_exceeded: {
     title: 'Достигнут лимит расходов на перевод',
     advice:
