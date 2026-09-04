@@ -127,19 +127,52 @@ export interface ChapterAccepted {
 }
 
 /**
- * Книга в списке. Заголовка у неё нет и он не выдумывается: `<title>` страницы
- * — это «Глава 12 — Книга | Сайт», а заголовок первой главы — имя главы, и
+ * Книга в списке. Заголовок сервис не выдумывает: `<title>` страницы — это
+ * «Глава 12 — Книга | Сайт», а заголовок первой главы — имя главы, и
  * подставить второе под первое значит назвать книгу именем её двенадцатой
- * главы. Наружу едет адрес; как показать его человеку, решает интерфейс.
+ * главы. Поэтому наружу едет адрес, а название — то, что написал читатель.
  */
 export interface Book {
   id: number
   key: string
+  /** Название, написанное читателем. `null` — показываем адрес. */
+  title: string | null
   lang: Language
   site: string | null
   chapters: number
   /** Сколько глав уже можно открыть и читать. */
   readable: number
+}
+
+/**
+ * Состояние выгрузки книги целиком.
+ *
+ * У книги-образца 550 глав по две секунды паузы — это час работы с одного
+ * нажатия, и без состояния он неотличим от зависшего сервиса.
+ */
+export interface BookWalk {
+  book_id: number
+  running: boolean
+  /** Сколько глав загружено с начала этой выгрузки. */
+  loaded: number
+  limit: number
+  /** Отказ, оборвавший выгрузку. `null` — дошли до конца книги или до потолка. */
+  stopped_by: string | null
+  /** Выгрузку попросили прекратить. Это не отказ: загруженное на месте. */
+  cancelled: boolean
+}
+
+/** Что оказалось на странице, открытой в живом окне браузера. */
+export interface BrowserCheck {
+  ok: boolean
+  kind: string | null
+  status: number
+  title: string
+  url: string
+  waited_seconds: number
+  /** Видно ли окно человеку. `false` — браузер headless, проходить нечего. */
+  visible: boolean
+  screenshot: boolean
 }
 
 /** Глава в оглавлении: всё, что нужно, чтобы выбрать и открыть. Без текста. */
@@ -156,7 +189,12 @@ export interface ChapterBrief {
 /** Пределы, которые сервер объявляет клиенту, чтобы тот не предлагал невозможного. */
 export interface Health {
   status: string
-  limits: { max_chapters_per_run: number }
+  limits: {
+    /** Сколько глав можно попросить пройти вперёд с экрана главы. */
+    max_chapters_per_run: number
+    /** Где остановится выгрузка книги целиком. */
+    max_chapters_per_book: number
+  }
 }
 
 /** Итог живой проверки синтеза: единственное, что нельзя узнать чтением настроек. */
@@ -243,6 +281,40 @@ export const api = {
   /** Оглавление книги в порядке чтения. Без текста глав. */
   bookChapters: (bookId: number) => request<ChapterBrief[]>(`/books/${bookId}/chapters`),
 
+  /** Назвать книгу. Пустая строка возвращает показ по адресу. */
+  renameBook: (bookId: number, title: string) =>
+    request<Book>(`/books/${bookId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    }),
+
+  /** Удалить книгу вместе с главами. Слова из словаря это не трогает. */
+  deleteBook: (bookId: number) => request<void>(`/books/${bookId}`, { method: 'DELETE' }),
+
+  /**
+   * Выгрузить книгу целиком: идти вперёд, пока идётся.
+   *
+   * Перевод выключен по умолчанию, и это про деньги: книга-образец — полтора
+   * миллиона символов, половина месячного потолка.
+   */
+  walkBook: (bookId: number, translate = false) =>
+    request<BookWalk>(`/books/${bookId}/walk`, {
+      method: 'POST',
+      body: JSON.stringify({ translate }),
+    }),
+
+  /** Сколько уже выгружено. Спрашивается, пока выгрузка идёт. */
+  bookWalk: (bookId: number) => request<BookWalk>(`/books/${bookId}/walk`),
+
+  /**
+   * Прекратить выгрузку. Загруженное остаётся, продолжить можно той же кнопкой.
+   *
+   * Работа не убивается на середине: сервис смотрит просьбу между главами и
+   * уходит, дописав текущую, — поэтому `running` гаснет через секунду-две.
+   */
+  stopBookWalk: (bookId: number) =>
+    request<BookWalk>(`/books/${bookId}/walk`, { method: 'DELETE' }),
+
   /**
    * Поставить главу в очередь. Идемпотентно: повтор не ходит на сайт.
    *
@@ -261,6 +333,15 @@ export const api = {
   /** Дозалить перевод после отказа. Переведённое не переотправляется. */
   translateChapter: (id: number) =>
     request<ChapterAccepted>(`/chapters/${id}/translate`, { method: 'POST' }),
+
+  /**
+   * Спросить у сайта заново, куда ведёт глава.
+   *
+   * Нужно главам, загруженным до того, как адаптер научился читать ссылку
+   * вперёд: у них её нет и не появится само. Текст и переводы при этом не
+   * трогаются — со страницы берётся только ссылка.
+   */
+  relinkChapter: (id: number) => request<Chapter>(`/chapters/${id}/relink`, { method: 'POST' }),
 
   /** Значения слова из локальных словарей: без интернета и без задержки. */
   lookup: (word: string, lang: Language = 'zh') =>
@@ -301,6 +382,28 @@ export const api = {
    * только по нажатию: «ключ задан» горит зелёным и там, где не хватает роли.
    */
   speechCheck: () => request<SpeechCheck>('/diagnostics/speech-check', { method: 'POST' }),
+
+  /**
+   * Открыть страницу в живом окне браузера и подождать, пока проверку пройдут.
+   *
+   * Обычно челлендж проходится сам, и ответ приходит через пару секунд. Но
+   * если сайт показал капчу, нажать на неё может только человек — и это
+   * единственный способ до неё добраться.
+   */
+  browserCheck: (url: string, seconds = 60) =>
+    request<BrowserCheck>('/diagnostics/browser-check', {
+      method: 'POST',
+      body: JSON.stringify({ url, seconds }),
+    }),
+}
+
+/**
+ * Адрес снимка экрана последней проверки. Не запрос, а ссылка: её ставит
+ * `<img>`. Метка времени в строке запроса обязательна — файл один и всегда по
+ * одному адресу, и без неё браузер показал бы прошлую проверку.
+ */
+export function browserScreenshotUrl(stamp: number): string {
+  return `/api/diagnostics/browser-check/screenshot?t=${stamp}`
 }
 
 /**

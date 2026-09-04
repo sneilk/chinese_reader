@@ -29,7 +29,15 @@ Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/chinese-reader/ms-playwright
 Environment=HOME=/opt/chinese-reader/data/home
 
 # Слушаем только петлю: наружу отдаёт Caddy, он же держит TLS и пароль.
-ExecStart=/opt/chinese-reader/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+#
+# --timeout-graceful-shutdown обязателен, и вот почему. Uvicorn при остановке
+# фоновые задачи не убивает, а ждёт, и ждёт он их ДО остановки приложения —
+# то есть попросить их изнутри уже некому. Выгрузка книги идёт до часа, и без
+# этого предела каждая выкладка упиралась бы в TimeoutStopSec с последующим
+# SIGKILL. Десять секунд — время дописать текущую главу; недописанную приберёт
+# recover_interrupted на следующем старте, ради чего он и написан.
+ExecStart=/opt/chinese-reader/venv/bin/uvicorn app.main:app \
+	--host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 10
 
 Restart=always
 RestartSec=3

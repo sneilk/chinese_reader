@@ -9,7 +9,7 @@
  * мелким шрифтом: когда что-то ломается, детали экономят полчаса.
  */
 
-import type { ErrorKind } from './api'
+import type { BrowserCheck, ErrorKind } from './api'
 
 export interface ErrorInfo {
   /** Короткий заголовок: что случилось. */
@@ -105,6 +105,39 @@ const UNKNOWN: ErrorInfo = {
 
 export function describeError(kind: ErrorKind | string): ErrorInfo {
   return MESSAGES[kind] ?? UNKNOWN
+}
+
+/**
+ * Итог живой проверки сайта словами: что увидел браузер и что с этим делать.
+ *
+ * Три исхода, и советы у них разные. Страница открылась — кука проверки легла
+ * в профиль, и загрузка глав теперь пойдёт. Не открылась, а окна не видно —
+ * чинить надо настройку, руками тут ничего не пройти. Не открылась, но окно
+ * есть — вот тогда и смотрят на снимок, и жмут капчу.
+ */
+export function describeBrowserCheck(result: BrowserCheck): string {
+  const waited = `за ${result.waited_seconds} с`
+
+  if (result.ok) {
+    return (
+      `Страница открылась ${waited}: HTTP ${result.status}, «${result.title}». ` +
+      'Кука проверки легла в профиль — загрузка глав пойдёт.'
+    )
+  }
+
+  const reason = result.kind ? describeError(result.kind).title : `HTTP ${result.status}`
+
+  if (!result.visible) {
+    return (
+      `${reason} ${waited}, но окна не видно: браузер запущен headless, ` +
+      'и пройти проверку руками негде. Выключите BROWSER_HEADLESS и перезапустите сервис.'
+    )
+  }
+
+  return (
+    `${reason} ${waited}. Заголовок страницы: «${result.title}». ` +
+    'Если на снимке капча — пройдите её в окне браузера и запустите проверку ещё раз.'
+  )
 }
 
 /** Что показывать, пока конвейер работает: статус словами, а не термином. */

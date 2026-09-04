@@ -55,9 +55,22 @@
           </div>
         </div>
 
-        <div class="nav-77c">
-          <a class="btn-1 prev" href="/novel/the-long-cartography/chapter-11">Previous</a>
-          <a class="btn-1 next" href="/novel/the-long-cartography/chapter-13">Next Chapter</a>
+        <!--
+          Кнопки перехода сняты с живой страницы: подписи у них нет вовсе,
+          только значок в <svg>, а классы сгенерированы Tailwind и слов
+          `next`/`prev` не содержат. Вся подпись — в aria-label.
+        -->
+        <div class="flex w-[58px] flex-col gap-2 rounded-[22px] border p-2">
+          <a aria-label="Previous chapter"
+             class="group flex h-11 w-full items-center justify-center rounded-[14px] border transition"
+             href="/novel/the-long-cartography/chapter-11">
+            <svg aria-hidden="true" class="h-5 w-5" viewBox="0 0 24 24"><path d="M19 12H5"/></svg>
+          </a>
+          <a aria-label="Next chapter"
+             class="group flex h-11 w-full items-center justify-center rounded-[14px] border transition"
+             href="/novel/the-long-cartography/chapter-13">
+            <svg aria-hidden="true" class="h-5 w-5" viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
+          </a>
         </div>
       </div>
 

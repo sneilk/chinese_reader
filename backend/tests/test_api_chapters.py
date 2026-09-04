@@ -34,17 +34,23 @@ _PARAGRAPHS = [
     "外面的雨越下越大，路上已经看不见一个人影了。",
     "他们两个人就这样坐着，谁也没有先开口说话。",
 ]
-HTML = (
-    "<html><head><title>Глава</title></head><body>"
-    '<h1 class="chapter-title">Первая глава</h1>'
-    '<div id="neirong">' + "".join(f"<p>{p}</p>" for p in _PARAGRAPHS) + "</div>"
-    "</body></html>"
-)
+def html(*, next_url: str | None = None) -> str:
+    """Страница главы 51shucheng. `next_url` рисует кнопку «下一章»."""
+    nav = f'<nav><a id="BookNext" href="{next_url}">下一章 ›</a></nav>' if next_url else ""
+    return (
+        "<html><head><title>Глава</title></head><body>"
+        '<h1 class="chapter-title">Первая глава</h1>'
+        '<div id="neirong">' + "".join(f"<p>{p}</p>" for p in _PARAGRAPHS) + "</div>"
+        f"{nav}</body></html>"
+    )
+
+
+HTML = html()
 
 
 class FakeFetcher:
-    def __init__(self, html: str = HTML, failure: FetchFailure | None = None) -> None:
-        self.html = html
+    def __init__(self, page: str = HTML, failure: FetchFailure | None = None) -> None:
+        self.html = page
         self.failure = failure
         self.calls = 0
 
@@ -327,6 +333,125 @@ def test_pipeline_without_translator_stops_at_segmented(env):
     assert got["status"] == ChapterStatus.SEGMENTED
     assert got["error"] is None
     assert got["content"]
+
+
+# --- ссылка вперёд, узнанная заново ---
+#
+# У глав, загруженных до того, как адаптер 51shucheng научился читать кнопку
+# «下一章», `next_chapter_url` пуст навсегда, и по ним книга не едет никуда.
+# Отличить такую главу от последней главы книги по базе нельзя: обе выглядят
+# как «ссылки нет», — поэтому спрашивать приходится у сайта.
+#
+# Главное здесь — чего эта операция не делает. Перезагрузка главы пересобрала
+# бы предложения, а с ними уехали бы переводы, за которые уже заплачено.
+
+
+def test_relink_finds_the_way_forward(env):
+    client, fetcher, _ = env
+    chapter_id = client.post("/api/chapters", json={"url": URL}).json()["id"]
+    assert client.get(f"/api/chapters/{chapter_id}").json()["next_url"] is None
+
+    fetcher.html = html(next_url=OTHER_URL)
+    got = client.post(f"/api/chapters/{chapter_id}/relink")
+
+    assert got.status_code == 200
+    assert got.json()["next_url"] == OTHER_URL
+    assert client.get(f"/api/chapters/{chapter_id}").json()["next_url"] == OTHER_URL
+
+
+def test_relink_keeps_the_translations(env, factory):
+    """Ради этого ссылка и обновляется отдельно, а не перезагрузкой главы."""
+    from app.db.models import Sentence
+
+    client, fetcher, _ = env
+    chapter_id = client.post("/api/chapters", json={"url": URL}).json()["id"]
+    before = client.get(f"/api/chapters/{chapter_id}").json()["sentences"]
+    assert all(s["translation"] for s in before)
+
+    fetcher.html = html(next_url=OTHER_URL)
+    client.post(f"/api/chapters/{chapter_id}/relink")
+
+    after = client.get(f"/api/chapters/{chapter_id}").json()["sentences"]
+    assert [(s["idx"], s["translation"]) for s in after] == [
+        (s["idx"], s["translation"]) for s in before
+    ]
+    with factory() as session:
+        assert session.query(Sentence).count() == len(before), "предложения не пересобраны"
+
+
+def test_relink_finding_nothing_is_not_a_failure(env):
+    """Последняя глава книги — это состояние, а не отказ разбора."""
+    client, _, _ = env
+    chapter_id = client.post("/api/chapters", json={"url": URL}).json()["id"]
+
+    got = client.post(f"/api/chapters/{chapter_id}/relink")
+
+    assert got.status_code == 200
+    assert got.json()["next_url"] is None
+    assert got.json()["status"] == ChapterStatus.READY
+
+
+def test_relink_reports_a_site_failure(env):
+    """«Ссылки нет» и «до сайта не дошли» — разные ответы, иначе кнопка врёт.
+
+    Ответив главой без ссылки, ручка сказала бы «книга кончилась» ровно там,
+    где сайт попросил проверку: читатель нажал кнопку и увидел то же, что и до
+    неё, — то есть узнал, что кнопка не работает, а не что делать.
+    """
+    client, fetcher, _ = env
+    chapter_id = client.post("/api/chapters", json={"url": URL}).json()["id"]
+    fetcher.failure = FetchFailure(ErrorKind.CHALLENGE, "челлендж")
+
+    got = client.post(f"/api/chapters/{chapter_id}/relink")
+
+    assert got.status_code == 502
+    assert got.json()["error"]["kind"] == ErrorKind.CHALLENGE
+
+
+def test_relink_failure_does_not_touch_the_chapter(env):
+    """Отказ сайта не должен портить главу: текст на месте, читать можно."""
+    client, fetcher, _ = env
+    chapter_id = client.post("/api/chapters", json={"url": URL}).json()["id"]
+    fetcher.failure = FetchFailure(ErrorKind.CHALLENGE, "челлендж")
+
+    client.post(f"/api/chapters/{chapter_id}/relink")
+
+    got = client.get(f"/api/chapters/{chapter_id}").json()
+    assert got["status"] == ChapterStatus.READY
+    assert got["content"]
+    assert got["error"] is None
+
+
+def test_relink_reports_the_loaded_neighbour(env):
+    """Если следующая глава уже в базе, переход бесплатный — и это видно сразу."""
+    client, fetcher, _ = env
+    chapter_id = client.post("/api/chapters", json={"url": URL}).json()["id"]
+    other_id = client.post("/api/chapters", json={"url": OTHER_URL}).json()["id"]
+
+    fetcher.html = html(next_url=OTHER_URL)
+    got = client.post(f"/api/chapters/{chapter_id}/relink").json()
+
+    assert got["next_chapter_id"] == other_id
+
+
+def test_relink_without_text_conflicts(env):
+    """Незагруженную главу надо загружать целиком, а это другая кнопка."""
+    client, fetcher, _ = env
+    fetcher.failure = FetchFailure(ErrorKind.CHALLENGE, "челлендж")
+    chapter_id = client.post("/api/chapters", json={"url": URL}).json()["id"]
+
+    r = client.post(f"/api/chapters/{chapter_id}/relink")
+
+    assert r.status_code == 409
+    assert r.json()["error"]["kind"] == ErrorKind.EMPTY_EXTRACT
+
+
+def test_relink_unknown_chapter_404(env):
+    client, _, _ = env
+    r = client.post("/api/chapters/999/relink")
+
+    assert r.status_code == 404
+    assert r.json()["error"]["kind"] == ErrorKind.NOT_FOUND
 
 
 # --- условный запрос ---

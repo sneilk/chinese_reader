@@ -38,9 +38,9 @@ MAX_SENTENCE_CHARS = 40
 BACKEND = Path(__file__).resolve().parents[1]
 OUT_DIR = BACKEND / "tests" / "data"
 
-fixture = settings.data_dir / "chapter-fixture.html"
+fixture = settings.data_dir / "fixtures" / "51shucheng-chapter.html"
 if not fixture.exists():
-    sys.exit(f"нет фикстуры главы: {fixture} (снимается в T0.5)")
+    sys.exit(f"нет фикстуры главы: {fixture} (снимается scripts/snapshot_fixtures.py)")
 
 raw = ShuchengAdapter().parse_chapter(
     fixture.read_text(encoding="utf-8"), "https://51shucheng.net/"

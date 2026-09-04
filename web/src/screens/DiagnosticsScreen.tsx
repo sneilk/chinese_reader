@@ -16,8 +16,16 @@
  */
 
 import { useEffect, useState } from 'react'
-import { ApiError, api, type Diagnostics, type SpeechCheck } from '../api'
+import {
+  ApiError,
+  api,
+  browserScreenshotUrl,
+  type BrowserCheck,
+  type Diagnostics,
+  type SpeechCheck,
+} from '../api'
 import { ErrorNote } from '../components/ErrorNote'
+import { describeBrowserCheck } from '../errors'
 
 interface Check {
   label: string
@@ -25,7 +33,7 @@ interface Check {
   detail: string
   advice?: string
   /** Ключ проверки, которую можно выполнить вживую. */
-  probe?: 'speech'
+  probe?: 'speech' | 'browser'
 }
 
 function share(used: number, limit: number): number {
@@ -92,6 +100,7 @@ function buildChecks(d: Diagnostics): Check[] {
       ok: d.browser_profile_exists,
       detail: d.browser_profile_exists ? 'на месте' : 'отсутствует',
       advice: 'Без него загрузка упрётся в проверку сайта: профиль хранит куки.',
+      probe: 'browser',
     },
     {
       label: 'Режим браузера',
@@ -157,6 +166,101 @@ function SpeechProbe() {
   )
 }
 
+/**
+ * Живая проверка сайта в окне браузера.
+ *
+ * Обычно челлендж проходится сам, и ответ приходит через пару секунд. Но если
+ * Cloudflare показал капчу, нажать на неё может только человек — а до этой
+ * кнопки такого случая просто не существовало: глава уходила в `failed` с
+ * советом «попробуйте через минуту», который в этом случае не помогает
+ * никогда.
+ *
+ * Окно живёт там же, где браузер: на разработческой машине — на экране, на ВМ
+ * — на Xvfb, и смотрят его через VNC. Чтобы увидеть проверку и без VNC, рядом
+ * показывается снимок экрана.
+ */
+function BrowserProbe() {
+  const [url, setUrl] = useState('')
+  const [result, setResult] = useState<BrowserCheck | null>(null)
+  const [error, setError] = useState<ApiError | null>(null)
+  const [busy, setBusy] = useState(false)
+  // Файл снимка один и всегда по одному адресу: без метки браузер показал бы
+  // прошлую проверку вместо только что запущенной.
+  const [stamp, setStamp] = useState(0)
+
+  async function run() {
+    const target = url.trim()
+    if (!target || busy) return
+    setBusy(true)
+    setResult(null)
+    setError(null)
+    try {
+      const got = await api.browserCheck(target)
+      setResult(got)
+      setStamp(Date.now())
+    } catch (e) {
+      setError(e instanceof ApiError ? e : new ApiError('network', String(e)))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="probe">
+      <form
+        className="probe__form"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void run()
+        }}
+      >
+        <input
+          className="input"
+          type="url"
+          inputMode="url"
+          placeholder="https://51shucheng.net/… — адрес, который не открывается"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          disabled={busy}
+          aria-label="Адрес для проверки в браузере"
+        />
+        <button className="button button--quiet" type="submit" disabled={busy || !url.trim()}>
+          {busy ? 'Окно открыто…' : 'Открыть в браузере'}
+        </button>
+      </form>
+
+      <p className="muted probe__hint">
+        Откроет страницу в живом окне браузера и подождёт до минуты. Если сайт показал
+        капчу — пройдите её руками в этом окне: на этой машине оно на экране, на сервере
+        живёт на Xvfb и смотрится через VNC. Снимок экрана появится здесь в любом случае.
+      </p>
+
+      {busy && (
+        <p className="muted progress" role="status" aria-live="polite">
+          Жду. Обычно проверка проходит сама за несколько секунд.
+        </p>
+      )}
+
+      {error && <ErrorNote kind={error.kind} detail={error.message} />}
+
+      {result && (
+        <>
+          <p className={result.ok ? 'check__probe-ok' : 'check__advice'}>
+            {describeBrowserCheck(result)}
+          </p>
+          {result.screenshot && (
+            <img
+              className="probe__shot"
+              src={browserScreenshotUrl(stamp)}
+              alt="Снимок экрана браузера на момент проверки"
+            />
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 export function DiagnosticsScreen() {
   const [data, setData] = useState<Diagnostics | null>(null)
   const [error, setError] = useState<ApiError | null>(null)
@@ -210,6 +314,7 @@ export function DiagnosticsScreen() {
               </div>
               {!check.ok && check.advice && <div className="check__advice">{check.advice}</div>}
               {check.probe === 'speech' && <SpeechProbe />}
+              {check.probe === 'browser' && <BrowserProbe />}
             </div>
           </li>
         ))}

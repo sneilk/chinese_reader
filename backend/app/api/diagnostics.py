@@ -8,21 +8,31 @@
 
 Секретов здесь нет и быть не должно: только «ключ задан» или «не задан», без
 самого ключа и без адресов.
+
+Две проверки из ряда выбиваются, и обе — потому что их ответ нельзя прочитать,
+можно только попробовать: синтез речи и проверка сайта в живом браузере.
+Первая тратит деньги, вторая — время и окно на экране, поэтому обе запускаются
+нажатием, а не открытием экрана.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import logging
+
+from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 
-from app.api.deps import SessionDep, SynthesizerDep
-from app.api.schemas import DiagnosticsOut, SpeechCheckOut
+from app.api.deps import FetcherDep, SessionDep, SynthesizerDep
+from app.api.schemas import BrowserCheckIn, BrowserCheckOut, DiagnosticsOut, SpeechCheckOut
 from app.config import settings
 from app.db.models import Chapter, DictEntry, Sentence, UserWord
 from app.domain import ErrorKind
 from app.providers.speech import SpeechFailure
 from app.services.budget import chars_this_month, speech_chars_this_month
 from app.services.speech import cache_size_bytes
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["diagnostics"])
 
@@ -87,6 +97,63 @@ async def check_speech(synthesizer: SynthesizerDep) -> SpeechCheckOut:
     return SpeechCheckOut(
         ok=True,
         detail=f"голос {synthesizer.voice}, {len(result.audio) // 1024} КБ",
+    )
+
+
+@router.post("/diagnostics/browser-check", response_model=BrowserCheckOut)
+async def check_browser(payload: BrowserCheckIn, fetcher: FetcherDep) -> BrowserCheckOut:
+    """Открыть страницу в окне браузера и подождать, пока проверку пройдут руками.
+
+    Обычно челлендж проходится сам, и тогда ответ приходит через пару секунд —
+    ждать до конца окна не приходится. Но «обычно» не значит «всегда»: если
+    Cloudflare показал капчу, нажать на неё может только человек, а до этой
+    ручки такого случая просто не существовало. Глава уходила в `failed` с
+    советом «попробуйте через минуту», который в этом случае не помогает
+    никогда.
+
+    Окно живёт там же, где браузер: на разработческой машине — на экране, на
+    ВМ — на Xvfb, и смотрят его через VNC. Чтобы увидеть проверку и без VNC,
+    рядом отдаётся снимок экрана.
+
+    Ответ ждёт столько, сколько попросили, и это осознанно: запускать ещё одну
+    фоновую задачу с опросом статуса ради проверки, которая обычно занимает
+    пять секунд, дороже самой проверки.
+    """
+    if not hasattr(fetcher, "open_for_check"):
+        # Так выглядит подменённый загрузчик в тестах и любой будущий,
+        # работающий без браузера: окна у него нет, и открывать нечего.
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorKind.ADAPTER_ERROR)
+
+    result = await fetcher.open_for_check(
+        payload.url,
+        seconds=payload.seconds,
+        screenshot_path=settings.browser_check_screenshot,
+    )
+    return BrowserCheckOut(
+        ok=result.ok,
+        kind=str(result.kind) if result.kind else None,
+        status=result.status,
+        title=result.title[:300],
+        url=result.url,
+        waited_seconds=round(result.waited_seconds, 1),
+        visible=result.visible,
+        screenshot=result.screenshot is not None,
+    )
+
+
+@router.get("/diagnostics/browser-check/screenshot")
+def read_browser_screenshot() -> FileResponse:
+    """Снимок экрана последней проверки. Единственный способ увидеть капчу без VNC."""
+    path = settings.browser_check_screenshot
+    if not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, ErrorKind.NOT_FOUND)
+
+    return FileResponse(
+        path,
+        media_type="image/png",
+        # Снимок один и перезаписывается: закэшированный показывал бы прошлую
+        # проверку вместо той, которую только что запустили.
+        headers={"cache-control": "no-store"},
     )
 
 

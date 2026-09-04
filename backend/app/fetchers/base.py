@@ -12,7 +12,18 @@ from app.domain import ErrorKind
 
 # Заголовок страницы Cloudflare-челленджа. Проверяется вместе со статусом:
 # по одному только 403 нельзя отличить челлендж от закрытого доступа.
-_CHALLENGE_TITLES = ("just a moment", "attention required", "checking your browser")
+#
+# Китайский вариант — не для полноты: 51shucheng отдаёт челлендж именно с ним
+# («请稍候…» — то же «подождите»), и снятый с него headless-снимок это
+# подтвердил. Без этой строки челлендж на китайской локали опознаётся только по
+# заголовку `cf-mitigated`, а он есть не всегда.
+_CHALLENGE_TITLES = (
+    "just a moment",
+    "attention required",
+    "checking your browser",
+    "请稍候",
+    "请稍后",
+)
 
 
 @dataclass(frozen=True)

@@ -55,12 +55,34 @@ function useFollowSpeech(sentence: number, playing: boolean): void {
   }, [sentence, playing])
 }
 
+/**
+ * Сколько глав вперёд предлагать, пока сервер не сказал свой предел.
+ *
+ * Не вторая копия настройки, а значение на те полсекунды, пока не приехало
+ * настоящее: держать его константой значило бы однажды предложить больше, чем
+ * примут в ответ.
+ */
+const FALLBACK_AHEAD = 10
+
 export function ReaderScreen({ id }: { id: number }) {
   const { chapter, requestError, loading, reload } = useChapter(id)
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState<ApiError | null>(null)
   const [loadingNext, setLoadingNext] = useState(false)
+  const [ahead, setAhead] = useState(0)
+  const [maxAhead, setMaxAhead] = useState(FALLBACK_AHEAD)
+  const [aheadNote, setAheadNote] = useState<string | null>(null)
+  const [relinking, setRelinking] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+
+  // Предел спрашиваем у сервера: он же его и применяет. Отказ глушим — без
+  // предела экран работает, просто с догадкой.
+  useEffect(() => {
+    api
+      .health()
+      .then((health) => setMaxAhead(health.limits.max_chapters_per_run))
+      .catch(() => undefined)
+  }, [])
 
   const [mode, setMode] = useReadingMode()
   const content = chapter?.content ?? ''
@@ -189,6 +211,50 @@ export function ReaderScreen({ id }: { id: number }) {
     }
   }
 
+  /**
+   * Загрузить пачку глав вперёд, оставшись на этой.
+   *
+   * Обход идёт от текущей главы: `follow` на уже загруженной главе на сайт за
+   * ней не ходит, а продолжает цепочку с неё (RFC §4). Уходить никуда не надо
+   * — читатель дочитывает эту главу, пока грузятся следующие.
+   */
+  async function loadAhead() {
+    if (!chapter || ahead < 1 || loadingNext) return
+    setLoadingNext(true)
+    setRetryError(null)
+    setAheadNote(null)
+    try {
+      await api.createChapter(chapter.url, ahead)
+      setAheadNote(
+        `Загружаю ${ahead} гл. вперёд — можно читать дальше, работа идёт фоном. ` +
+          'Загруженное появится в оглавлении книги.',
+      )
+    } catch (e) {
+      setRetryError(e instanceof ApiError ? e : new ApiError('network', String(e)))
+    } finally {
+      setLoadingNext(false)
+    }
+  }
+
+  /**
+   * Спросить у сайта заново, куда ведёт глава.
+   *
+   * Нужно главам, загруженным до того, как адаптер научился читать ссылку
+   * вперёд: у них её нет и само не появится. Текст и переводы не трогаются.
+   */
+  async function relink() {
+    setRelinking(true)
+    setRetryError(null)
+    try {
+      await api.relinkChapter(id)
+      await reload()
+    } catch (e) {
+      setRetryError(e instanceof ApiError ? e : new ApiError('network', String(e)))
+    } finally {
+      setRelinking(false)
+    }
+  }
+
   if (requestError) {
     return <ErrorNote kind={requestError.kind} detail={requestError.message} onRetry={reload} />
   }
@@ -287,7 +353,59 @@ export function ReaderScreen({ id }: { id: number }) {
               {loadingNext ? 'Загружаю…' : 'Загрузить следующую →'}
             </button>
           ) : (
-            <p className="muted">Ссылки на следующую главу на странице не нашлось.</p>
+            // Ссылки нет по одной из двух причин, и различить их можно только
+            // сходив на сайт: книга кончилась — или главу загрузили тогда,
+            // когда ссылки вперёд не читались вовсе.
+            <div className="chapternav__missing">
+              <p className="muted">Ссылки на следующую главу у этой главы не записано.</p>
+              <button
+                className="button button--quiet"
+                type="button"
+                onClick={() => void relink()}
+                disabled={relinking}
+              >
+                {relinking ? 'Спрашиваю сайт…' : 'Найти ссылку заново'}
+              </button>
+            </div>
+          )}
+
+          {/* Загрузка вперёд не уводит с главы: пока грузятся следующие,
+              читатель дочитывает эту. Ждать тут нечего. */}
+          {(chapter.next_url || chapter.next_chapter_id !== null) && (
+            <form
+              className="chapternav__ahead"
+              onSubmit={(e) => {
+                e.preventDefault()
+                void loadAhead()
+              }}
+            >
+              <label className="label" htmlFor="ahead">
+                Загрузить вперёд
+              </label>
+              <input
+                id="ahead"
+                className="input input--narrow"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={maxAhead}
+                value={ahead}
+                onChange={(e) =>
+                  setAhead(Math.min(maxAhead, Math.max(0, Number(e.target.value))))
+                }
+                disabled={loadingNext}
+              />
+              <button className="button button--quiet" type="submit" disabled={loadingNext || !ahead}>
+                {loadingNext ? 'Ставлю…' : `Ещё ${ahead || ''} гл.`.trim()}
+              </button>
+              <span className="muted label">до {maxAhead}; всю книгу — с экрана книги</span>
+            </form>
+          )}
+
+          {aheadNote && (
+            <p className="muted progress" role="status" aria-live="polite">
+              {aheadNote}
+            </p>
           )}
         </nav>
       )}

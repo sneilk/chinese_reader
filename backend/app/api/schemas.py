@@ -16,6 +16,17 @@ from pydantic import BaseModel, Field, field_validator
 from app.config import settings
 from app.db.models import Chapter, UserWord
 from app.domain import ChapterStatus, Language
+from app.services.books import MAX_TITLE_CHARS, BookRow
+from app.services.walks import Walk
+
+
+def require_http_url(value: str) -> str:
+    """Адрес страницы, а не что попало. Общий для всех ручек, берущих ссылку."""
+    value = value.strip()
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("нужен http- или https-адрес страницы")
+    return value
 
 
 class ChapterCreate(BaseModel):
@@ -28,11 +39,7 @@ class ChapterCreate(BaseModel):
     @field_validator("url")
     @classmethod
     def _http_only(cls, value: str) -> str:
-        value = value.strip()
-        parsed = urlparse(value)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise ValueError("нужен http- или https-адрес главы")
-        return value
+        return require_http_url(value)
 
 
 class ErrorOut(BaseModel):
@@ -51,16 +58,88 @@ class ChapterAccepted(BaseModel):
 
 
 class BookOut(BaseModel):
-    """Книга в списке. Заголовка нет — его неоткуда взять, см. services/books.py."""
+    """Книга в списке.
+
+    Заголовок здесь только тот, что написал читатель: вывести его из страницы
+    неоткуда (см. services/books.py). `None` означает «показывать адрес», и
+    именно так книга и выглядит, пока её не назвали.
+    """
 
     id: int
     #: Адрес книги на сайте. Как показать его человеку, решает интерфейс.
     key: str
+    title: str | None = None
     lang: Language
     site: str | None = None
     chapters: int
     #: Сколько глав уже можно открыть и читать.
     readable: int
+
+    @classmethod
+    def of(cls, book: BookRow) -> BookOut:
+        return cls(
+            id=book.id,
+            key=book.key,
+            title=book.title,
+            lang=Language(book.lang),
+            site=book.site,
+            chapters=book.chapters,
+            readable=book.readable,
+        )
+
+
+class BookUpdate(BaseModel):
+    """Правка книги. Пока правится только название — больше и нечего.
+
+    Значение по умолчанию отсутствует, и это не строгость ради строгости.
+    Пустая строка означает «стереть название и показывать адрес» — осмысленное
+    действие, а не «поля не передали». Будь у поля умолчание `None`, эти два
+    случая слились бы в один, и `PATCH {}` молча стирал бы заголовок.
+    """
+
+    title: str | None = Field(max_length=MAX_TITLE_CHARS)
+
+
+class BookWalkStart(BaseModel):
+    """Запуск выгрузки книги целиком."""
+
+    #: Переводить ли главы по ходу выгрузки. По умолчанию нет, и это не
+    #: осторожность, а арифметика: 550 глав — это полтора миллиона символов,
+    #: половина месячного потолка. Текст читаем и без перевода, а перевести
+    #: главу можно кнопкой, когда до неё дойдёт очередь.
+    translate: bool = False
+
+
+class BookWalkOut(BaseModel):
+    """Состояние выгрузки книги: по нему экран показывает прогресс."""
+
+    book_id: int
+    running: bool
+    #: Сколько глав загружено с начала этой выгрузки.
+    loaded: int
+    #: Потолок этого запуска.
+    limit: int
+    #: Отказ, оборвавший выгрузку. `None` — дошли до конца книги или до потолка.
+    stopped_by: str | None = None
+    #: Выгрузку попросили прекратить. Это не отказ: загруженное на месте, и
+    #: продолжить можно той же кнопкой.
+    cancelled: bool = False
+
+    @classmethod
+    def of(cls, walk: Walk) -> BookWalkOut:
+        return cls(
+            book_id=walk.book_id,
+            running=walk.running,
+            loaded=walk.loaded,
+            limit=walk.limit,
+            stopped_by=walk.stopped_by,
+            cancelled=walk.cancelled,
+        )
+
+    @classmethod
+    def idle(cls, book_id: int) -> BookWalkOut:
+        """Книгу ещё не выгружали. Это состояние, а не отсутствие ответа."""
+        return cls(book_id=book_id, running=False, loaded=0, limit=0)
 
 
 class ChapterBrief(BaseModel):
@@ -163,6 +242,39 @@ class SpeechCheckOut(BaseModel):
     ok: bool
     kind: str | None = None
     detail: str = ""
+
+
+class BrowserCheckIn(BaseModel):
+    """Открыть страницу в видимом окне и подождать, пока проверку пройдут."""
+
+    url: str = Field(min_length=8, max_length=1024)
+    #: Сколько держать окно открытым. Ждём не вслепую: как только челленджа не
+    #: стало, ответ приходит сразу, — поэтому обычный случай стоит секунды.
+    seconds: float = Field(
+        default=60.0, ge=0, le=settings.browser_check_timeout_seconds
+    )
+
+    @field_validator("url")
+    @classmethod
+    def _http_only(cls, value: str) -> str:
+        return require_http_url(value)
+
+
+class BrowserCheckOut(BaseModel):
+    """Что оказалось на странице к концу ожидания."""
+
+    ok: bool
+    #: Причина отказа, если страница так и не отдалась. `None` — всё в порядке.
+    kind: str | None = None
+    status: int
+    title: str = ""
+    #: Адрес, на котором браузер в итоге оказался: редиректы бывают говорящими.
+    url: str = ""
+    waited_seconds: float = 0.0
+    #: Видно ли окно человеку. False — браузер headless, и проходить нечего.
+    visible: bool = True
+    #: Есть ли снимок экрана. По нему и видно, что там за проверка.
+    screenshot: bool = False
 
 
 class ContextIn(BaseModel):

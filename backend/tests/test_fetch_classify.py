@@ -23,6 +23,10 @@ CHALLENGE_TITLE = "Just a moment..."
         (403, "", {"cf-mitigated": "challenge"}, ErrorKind.CHALLENGE),
         (200, CHALLENGE_TITLE, {}, ErrorKind.CHALLENGE),
         (503, "Checking your browser before accessing", {}, ErrorKind.CHALLENGE),
+        # Тот же челлендж на китайской локали: именно так его отдаёт
+        # 51shucheng, и по одному только заголовку ответа он ловится не всегда.
+        (403, "请稍候…", {}, ErrorKind.CHALLENGE),
+        (200, "请稍候…", {}, ErrorKind.CHALLENGE),
         # Челлендж распознаётся раньше, чем 403 трактуется как отказ доступа
         (403, "Attention Required! | Cloudflare", {}, ErrorKind.CHALLENGE),
         # Обычные отказы

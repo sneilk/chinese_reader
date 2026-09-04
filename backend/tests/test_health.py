@@ -29,6 +29,12 @@ def test_health_reports_the_walk_limit():
     assert limits["max_chapters_per_run"] == settings.max_chapters_per_run
 
 
+def test_health_reports_the_whole_book_limit():
+    """Выгрузка книги тоже конечна, и клиент должен знать, где именно."""
+    limits = client.get("/api/health").json()["limits"]
+    assert limits["max_chapters_per_book"] == settings.max_chapters_per_book
+
+
 def test_announced_limit_is_the_one_actually_enforced():
     """Объявленный предел и принимаемый — одно число, иначе объявление бесполезно.
 

@@ -21,16 +21,18 @@ from app.config import settings
 from app.db.session import SessionLocal
 from app.fetchers.browser import BrowserFetcher
 from app.lang.segment import Segmenter
+from app.logging_setup import RequestLogMiddleware, setup_logging
 from app.providers.speech import YandexSpeech
 from app.providers.translate import YandexTranslate
+from app.services import walks
 from app.services.pipeline import recover_interrupted
 
 log = logging.getLogger(__name__)
 
-# Логи уходят в stdout, а под systemd — прямо в journald, который сам
-# проставляет время и имя юнита. Дублировать их в формате значит читать
-# каждую строку дважды. Секретов в логах нет: ключ и куки не пишутся нигде.
-logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
+# Логи уходят в stdout, а под systemd — прямо в journald. Настройка целиком
+# живёт в app/logging_setup.py: уровень, формат и строка на запрос. Секретов в
+# логах нет и быть не должно — ключ и куки не пишутся нигде.
+setup_logging()
 
 
 def _recover_interrupted() -> None:
@@ -82,6 +84,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        # До закрытия браузера: обход, переживший остановку приложения, не
+        # должен ходить на сайт тем, что сейчас закроется. Времени выкладки это
+        # не сокращает — uvicorn ждёт фоновые задачи раньше и снимает их сам по
+        # --timeout-graceful-shutdown из юнита (services/walks.py).
+        walks.stop_all()
         await app.state.fetcher.close()
         if app.state.translator is not None:
             await app.state.translator.close()
@@ -99,6 +106,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Добавляется последним, а значит стоит снаружи всех: время в строке журнала
+# должно включать и CORS, и разбор тела, а не только работу ручки.
+app.add_middleware(RequestLogMiddleware)
 
 
 # Ловим родительский класс Starlette, а не HTTPException из FastAPI: свои

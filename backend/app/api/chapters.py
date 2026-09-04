@@ -38,7 +38,12 @@ from app.providers.speech import SpeechFailure
 from app.providers.translate import Translator
 from app.services import budget
 from app.services.chapters import get_or_create_chapter
-from app.services.pipeline import run_chapter_pipeline, translate_chapter, walk_chapters
+from app.services.pipeline import (
+    relink_chapter,
+    run_chapter_pipeline,
+    translate_chapter,
+    walk_chapters,
+)
 from app.services.speech import audio_for_sentence
 
 log = logging.getLogger(__name__)
@@ -229,6 +234,40 @@ def retranslate_chapter(
 
     background.add_task(_translate_job, factory, chapter.id, translator)
     return ChapterAccepted(id=chapter.id, status=ChapterStatus(chapter.status), created=False)
+
+
+@router.post("/chapters/{chapter_id}/relink", response_model=ChapterOut)
+async def relink_next_chapter(
+    chapter_id: int, session: SessionDep, fetcher: FetcherDep
+) -> ChapterOut:
+    """Спросить у сайта заново, куда ведёт эта глава.
+
+    Нужно для глав, загруженных до того, как адаптер научился читать ссылку
+    вперёд: у всей китайской половины базы `next_chapter_url` пуст, и по ним
+    книга не едет никуда. Отличить такую главу от последней главы книги
+    по базе нельзя — обе выглядят как «ссылки нет».
+
+    Перезагружать главу целиком нельзя: конвейер пересоберёт предложения, а с
+    ними уедут переводы, за которые уже заплачено. Поэтому со страницы берётся
+    только ссылка.
+
+    Ответ синхронный: это один поход на сайт, и ждать его — секунды. Фоновая
+    задача с опросом статуса стоила бы дороже самой работы.
+    """
+    chapter = _get_or_404(session, chapter_id)
+    if chapter.content is None:
+        # Глава не загружена: искать в ней ссылку вперёд нечего, её надо
+        # загрузить целиком — а это другая кнопка.
+        raise HTTPException(status.HTTP_409_CONFLICT, ErrorKind.EMPTY_EXTRACT)
+
+    asked = await relink_chapter(session, chapter, fetcher)
+    if asked.failed_with is not None:
+        # До сайта не дошли. Ответить главой без ссылки значило бы сказать
+        # «книга кончилась» вместо «сайт просит проверку»: читатель нажал
+        # кнопку и получил ровно то же, что видел до неё.
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, asked.failed_with)
+
+    return ChapterOut.of(chapter, next_chapter_id=_next_chapter_id(session, chapter))
 
 
 @router.get("/chapters/{chapter_id}/audio/{sentence_idx}")

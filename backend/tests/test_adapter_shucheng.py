@@ -15,8 +15,11 @@ from app.adapters.shucheng import ShuchengAdapter
 from app.domain import ErrorKind
 
 FIXTURES = Path(__file__).parent / "fixtures"
-REAL_CHAPTER = Path(__file__).resolve().parents[1] / "data" / "chapter-fixture.html"
-REAL_INDEX = Path(__file__).resolve().parents[1] / "data" / "book-index-fixture.html"
+# Живые снимки лежат одним набором в data/fixtures/ и снимаются
+# scripts/snapshot_fixtures.py — см. tests/test_adapter_next_chapter.py.
+LIVE = Path(__file__).resolve().parents[1] / "data" / "fixtures"
+REAL_CHAPTER = LIVE / "51shucheng-chapter.html"
+REAL_INDEX = LIVE / "51shucheng-book-index.html"
 
 CHAPTER_URL = "https://www.51shucheng.net/renwen/test-book/1.html"
 

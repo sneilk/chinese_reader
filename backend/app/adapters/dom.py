@@ -163,15 +163,22 @@ def block_paragraphs(element) -> list[str]:
 def find_next_link(doc, exclude: str | None = None) -> str | None:
     """Найти ссылку «следующая глава». `None` — её на странице нет.
 
-    Три попытки по убыванию надёжности: объявленный `rel="next"`, подпись
-    ссылки, класс или идентификатор. Последняя проверка отдельно отсеивает
-    «предыдущую»: у пары кнопок класс часто общий (`nav-btn prev`,
-    `nav-btn next`), и без исключения книга поехала бы назад.
+    Четыре попытки по убыванию надёжности: объявленный `rel="next"`, подпись
+    ссылки, `aria-label` или `title`, класс с идентификатором. Последняя
+    проверка отдельно отсеивает «предыдущую»: у пары кнопок класс часто общий
+    (`nav-btn prev`, `nav-btn next`), и без исключения книга поехала бы назад.
+
+    Третья попытка появилась по живой странице novelarrow: кнопка вперёд там —
+    голая стрелка в `<svg>`, то есть ссылка **без текста вовсе**. Подпись у неё
+    только одна, в `aria-label="Next chapter"`, а классы сгенерированы Tailwind
+    и слова `next` не содержат. Без этой попытки обход книги на живом сайте не
+    начинался: ссылки нет — цепочка кончилась, ещё не начавшись.
     """
     for href in doc.xpath("//link[@rel='next']/@href | //a[@rel='next']/@href"):
         if href and href != exclude:
             return str(href)
 
+    labelled: str | None = None
     fallback: str | None = None
     for anchor in doc.iter("a"):
         href = anchor.get("href")
@@ -182,11 +189,16 @@ def find_next_link(doc, exclude: str | None = None) -> str | None:
         if _NEXT_TEXTS.match(text):
             return href
 
-        marks = f"{anchor.get('class', '')} {anchor.get('id', '')} {anchor.get('title', '')}"
+        label = f"{anchor.get('aria-label', '')} {anchor.get('title', '')}".strip()
+        if labelled is None and _NEXT_TEXTS.match(label) and not _PREV_HINT.search(label):
+            labelled = href
+            continue
+
+        marks = f"{anchor.get('class', '')} {anchor.get('id', '')} {label}"
         if fallback is None and _NEXT_HINT.search(marks) and not _PREV_HINT.search(marks):
             fallback = href
 
-    return fallback
+    return labelled or fallback
 
 
 def page_title(doc) -> str:

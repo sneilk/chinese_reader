@@ -12,7 +12,15 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, api, audioUrl, isPending, isReadable, type ChapterStatus } from './api'
+import {
+  ApiError,
+  api,
+  audioUrl,
+  browserScreenshotUrl,
+  isPending,
+  isReadable,
+  type ChapterStatus,
+} from './api'
 
 interface Call {
   url: string
@@ -97,6 +105,108 @@ describe('форма запроса', () => {
     expect(calls[0].url).toContain('query=%D0%B4%D0%BE%D0%BC')
     expect(calls[0].url).toContain('limit=10')
     expect(calls[0].url).toContain('offset=20')
+  })
+})
+
+// --- книги ---
+
+describe('книги', () => {
+  it('переименование уезжает PATCH-ом', async () => {
+    const calls = stub(json({ id: 3, key: 'k', title: 'Книга' }))
+    await api.renameBook(3, 'Книга')
+
+    expect(calls[0].url).toBe('/api/books/3')
+    expect(calls[0].init?.method).toBe('PATCH')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ title: 'Книга' })
+  })
+
+  it('пустое название уезжает, а не отбрасывается', async () => {
+    // Оно значит «вернуть показ по адресу», и это осмысленное действие.
+    const calls = stub(json({ id: 3, key: 'k', title: null }))
+    await api.renameBook(3, '')
+
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ title: '' })
+  })
+
+  it('удаление книги отвечает без тела', async () => {
+    stub(new Response(null, { status: 204 }))
+    await expect(api.deleteBook(3)).resolves.toBeUndefined()
+  })
+
+  it('выгрузка книги по умолчанию не переводит', async () => {
+    // Полтора миллиона символов — половина месячного потолка; молча их
+    // тратить нельзя, поэтому перевод просят явно.
+    const calls = stub(json({ book_id: 3, running: true, loaded: 0, limit: 2000 }))
+    await api.walkBook(3)
+
+    expect(calls[0].init?.method).toBe('POST')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ translate: false })
+  })
+
+  it('перевод при выгрузке просится явно', async () => {
+    const calls = stub(json({ book_id: 3, running: true, loaded: 0, limit: 2000 }))
+    await api.walkBook(3, true)
+
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ translate: true })
+  })
+
+  it('прогресс спрашивается тем же адресом, но GET-ом', async () => {
+    const calls = stub(json({ book_id: 3, running: false, loaded: 7, limit: 2000 }))
+    await api.bookWalk(3)
+
+    expect(calls[0].url).toBe('/api/books/3/walk')
+    expect(calls[0].init?.method).toBeUndefined()
+  })
+
+  it('остановка выгрузки — DELETE, и она отвечает состоянием', async () => {
+    // Не 204: работа уходит не сразу, и ответ должен сказать, что уже сделано.
+    const calls = stub(json({ book_id: 3, running: true, loaded: 40, cancelled: true }))
+    const got = await api.stopBookWalk(3)
+
+    expect(calls[0].url).toBe('/api/books/3/walk')
+    expect(calls[0].init?.method).toBe('DELETE')
+    expect(got.cancelled).toBe(true)
+  })
+})
+
+// --- ссылка вперёд и окно браузера ---
+
+describe('ссылка вперёд и окно браузера', () => {
+  it('поиск ссылки заново — это POST без тела', async () => {
+    const calls = stub(json({ id: 1, url: 'u', status: 'ready' }))
+    await api.relinkChapter(1)
+
+    expect(calls[0].url).toBe('/api/chapters/1/relink')
+    expect(calls[0].init?.method).toBe('POST')
+  })
+
+  it('проверка сайта уезжает с адресом и ожиданием', async () => {
+    const calls = stub(json({ ok: true, status: 200 }))
+    await api.browserCheck('https://example.com/1', 30)
+
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      url: 'https://example.com/1',
+      seconds: 30,
+    })
+  })
+
+  it('ожидание по умолчанию — минута', async () => {
+    const calls = stub(json({ ok: true, status: 200 }))
+    await api.browserCheck('https://example.com/1')
+
+    expect(JSON.parse(String(calls[0].init?.body)).seconds).toBe(60)
+  })
+
+  it('снимок экрана — ссылка с меткой, а не запрос', async () => {
+    // Файл один и всегда по одному адресу: без метки браузер показал бы
+    // прошлую проверку вместо только что запущенной.
+    const calls = stub(json({}))
+    const first = browserScreenshotUrl(1)
+    const second = browserScreenshotUrl(2)
+
+    expect(first).not.toBe(second)
+    expect(first.startsWith('/api/diagnostics/browser-check/screenshot?')).toBe(true)
+    expect(calls).toHaveLength(0)
   })
 })
 

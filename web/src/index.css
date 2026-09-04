@@ -240,6 +240,14 @@ a {
   border-color: var(--border);
 }
 
+/* Удаление книги. Красный не «страшный», а отличимый: кнопка стоит рядом с
+   «Отмена», и перепутать их пальцем не должно быть легко. */
+.button--danger {
+  color: var(--accent-contrast);
+  background: var(--danger);
+  border-color: transparent;
+}
+
 .row {
   display: flex;
   flex-wrap: wrap;
@@ -516,9 +524,13 @@ a {
 
 /* --- переход к следующей главе --- */
 
+/* Колонка, а не строка: кроме перехода к следующей главе здесь стоит загрузка
+   пачки вперёд, и на телефоне они в одну строку не помещаются никогда. */
 .chapternav {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
   margin-top: var(--space-6);
   padding-top: var(--space-5);
   border-top: 1px solid var(--border);
@@ -528,6 +540,30 @@ a {
   text-decoration: none;
   display: inline-flex;
   align-items: center;
+}
+
+.chapternav__missing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: center;
+}
+
+/* Загрузка вперёд — не главное действие на экране чтения, а служебное:
+   отсюда тихая кнопка и мелкий шрифт подписи. */
+.chapternav__ahead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+}
+
+.chapternav__ahead .button {
+  min-height: 40px;
+  padding-block: var(--space-2);
 }
 
 /* --- подсказка по удержанию --- */
@@ -857,8 +893,11 @@ a {
   padding: 0;
 }
 
+/* Перенос обязателен: в карточке кроме имени и счётчика живут ещё две кнопки,
+   и на телефоне они в одну строку не встают. */
 .book {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-3);
   align-items: baseline;
   border: 1px solid var(--border);
@@ -866,6 +905,44 @@ a {
   background: var(--bg-raised);
   padding: var(--space-3) var(--space-4);
   margin-bottom: var(--space-3);
+}
+
+/* Карточка в правке разворачивается в колонку: поле ввода и вопрос об
+   удалении занимают всю ширину, а не половину строки. */
+.book--editing {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.book__edit,
+.book__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.book__edit .input {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.book__actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.book__actions .button {
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.9rem;
+}
+
+.book__hint {
+  font-size: 0.85rem;
+  /* Адрес книги — длинная строка без пробелов; ломаем где придётся. */
+  overflow-wrap: anywhere;
 }
 
 .book__link {
@@ -1008,6 +1085,87 @@ a {
 
 .check__footer {
   font-size: 0.9rem;
+}
+
+/* --- выгрузка книги целиком --- */
+
+/* Стоит над оглавлением, а не под ним: у книги в полтысячи глав «под ним» —
+   это экран прокрутки, и кнопку никто не найдёт. */
+.walk {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.walk__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.walk__option {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  /* 44px — минимальная цель для пальца, а галочка сама по себе меньше. */
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.walk__note {
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+/* --- живая проверка сайта в окне браузера --- */
+
+.probe {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  font-size: 0.9rem;
+}
+
+.probe__form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.probe__form .input {
+  flex: 1;
+  min-width: 14rem;
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+}
+
+.probe__form .button {
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.probe__hint {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+/* Снимок экрана браузера: единственный способ увидеть капчу без VNC.
+   Ширина по контейнеру — окно шире экрана телефона вчетверо. */
+.probe__shot {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
 }
 
 @media (max-width: 480px) {

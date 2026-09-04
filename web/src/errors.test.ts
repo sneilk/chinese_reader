@@ -14,8 +14,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { ErrorKind } from './api'
-import { describeError, describeStatus } from './errors'
+import type { BrowserCheck, ErrorKind } from './api'
+import { describeBrowserCheck, describeError, describeStatus } from './errors'
 
 const KINDS: ErrorKind[] = [
   'challenge',
@@ -74,6 +74,66 @@ describe('describeError', () => {
   it('прерванная перезапуском загрузка чинится ровно повтором', () => {
     // Ни сайт, ни провайдер тут ни при чём — глава просто попала под выкладку.
     expect(describeError('interrupted').retryable).toBe(true)
+  })
+})
+
+describe('describeBrowserCheck', () => {
+  function check(fields: Partial<BrowserCheck>): BrowserCheck {
+    return {
+      ok: false,
+      kind: 'challenge',
+      status: 403,
+      title: '请稍候…',
+      url: 'https://51shucheng.net/renwen/kniga/1.html',
+      waited_seconds: 12,
+      visible: true,
+      screenshot: true,
+      ...fields,
+    }
+  }
+
+  it('удачная проверка говорит, что теперь заработает', () => {
+    // Проверка не самоцель: её проходят, чтобы пошла загрузка глав.
+    const got = describeBrowserCheck(check({ ok: true, kind: null, status: 200, title: '第1章' }))
+
+    expect(got).toContain('открылась')
+    expect(got).toContain('профиль')
+  })
+
+  it('невидимое окно — это про настройку, а не про капчу', () => {
+    // Руками в headless-окне ничего не пройти, и советовать это жестоко.
+    const got = describeBrowserCheck(check({ visible: false }))
+
+    expect(got).toContain('BROWSER_HEADLESS')
+  })
+
+  it('видимое окно с челленджем зовёт смотреть на снимок', () => {
+    const got = describeBrowserCheck(check({ visible: true }))
+
+    expect(got).toContain('капча')
+    expect(got).not.toContain('BROWSER_HEADLESS')
+  })
+
+  it('причина названа по-человечески, а не кодом', () => {
+    const got = describeBrowserCheck(check({ kind: 'challenge' }))
+
+    expect(got).not.toContain('challenge')
+  })
+
+  it('отказ без известной причины не теряет код ответа', () => {
+    const got = describeBrowserCheck(check({ kind: null, status: 502 }))
+
+    expect(got).toContain('502')
+  })
+
+  it('три исхода различимы между собой', () => {
+    const texts = [
+      describeBrowserCheck(check({ ok: true, kind: null })),
+      describeBrowserCheck(check({ visible: false })),
+      describeBrowserCheck(check({ visible: true })),
+    ]
+
+    expect(new Set(texts).size).toBe(3)
   })
 })
 

@@ -43,8 +43,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
-from dataclasses import replace
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from urllib.parse import urljoin
 
@@ -62,7 +62,8 @@ from app.lang.normalize import normalize
 from app.lang.segment import Segmenter, Token, tokens_to_json
 from app.lang.sentences import split_sentences
 from app.providers.translate import TARGET_LANG, TranslateFailure, Translator
-from app.services import budget
+from app.services import budget, walks
+from app.services.books import chain_tail
 from app.services.chapters import get_or_create_chapter
 
 log = logging.getLogger(__name__)
@@ -385,6 +386,75 @@ def recover_interrupted(session: Session) -> tuple[int, int]:
     return failed, readable
 
 
+@dataclass
+class WalkResult:
+    """Чем кончился обход книги.
+
+    Одного списка загруженного мало: «загружено ноль» одинаково выглядит и
+    когда книга дочитана до конца, и когда первая же глава упёрлась в
+    челлендж. Разница здесь принципиальная — во втором случае есть что чинить.
+    """
+
+    loaded: list[Chapter] = field(default_factory=list)
+    #: `error_kind` главы, оборвавшей обход. `None` — остановка штатная:
+    #: ссылки вперёд не стало, встретилось кольцо или упёрлись в потолок.
+    stopped_by: str | None = None
+
+    def __len__(self) -> int:
+        return len(self.loaded)
+
+
+@dataclass(frozen=True)
+class Relinked:
+    """Чем кончился поход за ссылкой вперёд.
+
+    Различать «сайт не дал ссылки» и «до сайта не дошли» приходится потому,
+    что выглядят они одинаково — ссылки нет, — а означают противоположное:
+    первое это конец книги, второе неисправленный отказ. Выгрузка книги на
+    этом и ошибалась: получив челлендж, она сообщала «книга кончилась».
+    """
+
+    url: str | None = None
+    #: Причина, по которой спросить не вышло. `None` — спросили и получили ответ.
+    failed_with: str | None = None
+
+
+async def relink_chapter(session: Session, chapter: Chapter, fetcher: Fetcher) -> Relinked:
+    """Заново узнать у сайта, куда ведёт глава.
+
+    Нужно ровно для одного случая, зато неизбежного: глава загружена тогда,
+    когда её адаптер ссылку вперёд не читал, и `next_chapter_url` у неё пуст
+    навсегда. Таких глав в базе целая китайская половина, и по ним книга не
+    едет никуда.
+
+    Перезагружать главу целиком ради одного поля нельзя: конвейер пересобирает
+    предложения (`chapter.sentences.clear()`), а вместе с ними уезжают
+    переводы — то есть деньги, уже потраченные на эту главу. Поэтому здесь
+    страница разбирается, но записывается из неё **только ссылка**.
+
+    Отказ не портит главу: текст на месте, читать её можно, а «куда дальше»
+    просто остаётся неизвестным.
+    """
+    try:
+        result = await fetcher.get(chapter.url)
+        raw = pick_adapter(chapter.url).parse_chapter(result.html, result.url)
+    except (FetchFailure, AdapterFailure) as e:
+        log.warning("глава %s: ссылку вперёд узнать не удалось — %s", chapter.id, e.kind)
+        return Relinked(failed_with=e.kind)
+    except Exception:  # noqa: BLE001 — обход не должен падать из-за одной ссылки
+        log.exception("глава %s: непредвиденная ошибка при поиске ссылки вперёд", chapter.id)
+        return Relinked(failed_with=ErrorKind.ADAPTER_ERROR)
+
+    if not raw.next_chapter_url:
+        log.info("глава %s: сайт ссылки вперёд не даёт, книга кончилась", chapter.id)
+        return Relinked()
+
+    chapter.next_chapter_url = urljoin(result.url, raw.next_chapter_url)
+    session.commit()
+    log.info("глава %s: ссылка вперёд восстановлена — %s", chapter.id, chapter.next_chapter_url)
+    return Relinked(url=chapter.next_chapter_url)
+
+
 async def walk_chapters(
     session: Session,
     chapter: Chapter,
@@ -393,7 +463,9 @@ async def walk_chapters(
     segmenter: Segmenter,
     translator: Translator | None = None,
     limit: int,
-) -> list[Chapter]:
+    on_chapter: Callable[[Chapter], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> WalkResult:
     """Пройти книгу вперёд по ссылкам «следующая глава». Возвращает загруженное.
 
     Оглавления у novelarrow из разметки не достать (sources.md §2), поэтому
@@ -407,15 +479,40 @@ async def walk_chapters(
     это повод разобраться, а не повод продолжить по инерции: следующие двадцать
     запросов почти наверняка получат то же самое.
 
-    **Уже загруженная глава не перезагружается, но и не заканчивает обход.**
+    **Уже загруженная глава не перезагружается, но и не тратит потолок.**
     Дочитав до места, где остановились в прошлый раз, читатель нажмёт «ещё
-    десять» — и должен получить десять новых, а не «всё уже есть».
+    десять» — и должен получить десять новых, а не «всё уже есть». Поэтому
+    `limit` считает **загруженные** главы, а не шаги: перешагивание через
+    десять уже имеющихся не должно съедать весь запрос.
+
+    Шаги при этом тоже ограничены, и отдельно: цепочка из тысяч уже известных
+    глав не повод ходить по ней вечно, а `limit` от неё не убывает и сам обход
+    не остановит.
+
+    `on_chapter` зовётся на каждую загруженную главу. Нужен он выгрузке книги
+    целиком: та идёт час, и прогресс, приезжающий одним числом в конце, — это
+    не прогресс.
+
+    `should_stop` спрашивается между главами. Останавливаться посреди главы
+    незачем — она докачается за две секунды и ляжет в базу целой, — а вот
+    между ними это единственный способ уйти: обход живёт внутри фоновой
+    задачи, а её uvicorn при остановке сервиса **ждёт**.
     """
-    loaded: list[Chapter] = []
+    result = WalkResult()
     current = chapter
     visited = {chapter.url}
+    wanted = max(0, limit)
+    # Потолок шагов, а не загрузок: он существует только затем, чтобы обход
+    # кончился, даже если цепочка ссылок оказалась кольцом длиннее проверки на
+    # повтор. К «сколько глав просили» отношения не имеет.
+    steps_left = wanted + settings.max_chapters_per_book
 
-    for _ in range(max(0, limit)):
+    while len(result.loaded) < wanted and steps_left > 0:
+        steps_left -= 1
+        if walks.shutting_down() or (should_stop is not None and should_stop()):
+            log.info("обход книги от главы %s прекращён по просьбе", chapter.id)
+            break
+
         url = current.next_chapter_url
         if not url:
             log.info("обход книги: у главы %s нет ссылки вперёд", current.id)
@@ -436,13 +533,68 @@ async def walk_chapters(
         )
         if nxt.status == ChapterStatus.FAILED:
             log.warning("обход книги оборван на %s: %s", url, nxt.error_kind)
+            result.stopped_by = nxt.error_kind
             break
 
-        loaded.append(nxt)
+        result.loaded.append(nxt)
+        if on_chapter is not None:
+            on_chapter(nxt)
         current = nxt
 
-    log.info("обход книги от главы %s: загружено %s", chapter.id, len(loaded))
-    return loaded
+    log.info("обход книги от главы %s: загружено %s", chapter.id, len(result.loaded))
+    return result
+
+
+async def walk_book(
+    session: Session,
+    document_id: int,
+    *,
+    fetcher: Fetcher,
+    segmenter: Segmenter,
+    translator: Translator | None = None,
+    limit: int,
+) -> WalkResult:
+    """Выгрузить книгу вперёд от конца известной цепочки.
+
+    От обхода «ещё N глав» отличается не размером потолка, а тем, что читатель
+    не показывает, откуда идти: книга знает это сама. Началом берётся конец
+    цепочки — самая дальняя глава с известным местом (`books.chain_tail`).
+
+    Отдельный случай — та самая глава без ссылки вперёд. У неё два разных
+    смысла, и различить их из базы нельзя: либо книга кончилась, либо главу
+    загрузили тогда, когда ссылки не читались вовсе. Поэтому у сайта
+    спрашивается заново — одной страницей, без перезагрузки текста.
+    """
+    tail = chain_tail(session, document_id)
+    if tail is None:
+        log.info("книга %s пуста, обходить нечего", document_id)
+        return WalkResult()
+
+    if tail.content is None:
+        # Ни одна глава книги не загрузилась. Идти вперёд не от чего, и это не
+        # «книга кончилась», а неисправленный отказ первой главы: молчание
+        # здесь выглядело бы как «кнопка ничего не делает».
+        log.warning("книга %s: ни одной загруженной главы, обход невозможен", document_id)
+        return WalkResult(stopped_by=tail.error_kind or ErrorKind.EMPTY_EXTRACT)
+
+    if not tail.next_chapter_url:
+        asked = await relink_chapter(session, tail, fetcher)
+        if asked.failed_with is not None:
+            # До сайта не дошли — значит про конец книги мы ничего не узнали.
+            # Промолчать здесь означало бы сказать «книга кончилась» вместо
+            # «сайт просит проверку», то есть посоветовать не делать ничего.
+            return WalkResult(stopped_by=asked.failed_with)
+
+    return await walk_chapters(
+        session,
+        tail,
+        fetcher=fetcher,
+        segmenter=segmenter,
+        translator=translator,
+        limit=limit,
+        on_chapter=lambda _chapter: walks.note_loaded(document_id),
+        should_stop=lambda: walks.should_stop(document_id),
+    )
 
 
 def _pending_sentences(session: Session, chapter: Chapter) -> Sequence[Sentence]:

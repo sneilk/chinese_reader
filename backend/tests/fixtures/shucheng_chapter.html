@@ -3,6 +3,12 @@
   Структурная фикстура страницы главы 51shucheng.
   Разметка повторяет живую страницу (T0.5), текст — заполнитель: настоящая
   глава является чужим произведением и в репозиторий не кладётся.
+
+  Блок chapter-nav снят с живой страницы дословно, вплоть до идентификаторов и
+  подписей: именно он отвечает на вопрос «куда идти дальше», и именно его
+  адаптер раньше не читал. Кнопка «предыдущая» стоит здесь нарочно, хотя у
+  самой первой главы книги её нет: без неё нельзя проверить главное — что
+  книга едет вперёд, а не назад.
 -->
 <html lang="zh-CN">
 <head>
@@ -30,6 +36,18 @@
       <script>console.log("tracker");</script>
     </div>
   </div>
+
+  <nav class="chapter-nav" id="chapter-nav" aria-label="章节导航">
+    <a href="/renwen/test-book/0.html" id="BookPrev" class="chapter-nav-btn prev-btn" title="测试书名 第零章 序">
+      <div class="nav-content"><span class="nav-label">‹ 上一章</span><span class="nav-title">第零章 序</span></div>
+    </a>
+    <a href="/renwen/test-book" id="BookHome" class="toc-btn" title="返回《测试书名》目录">
+      <span class="toc-icon">☰</span><span class="toc-text">目录</span>
+    </a>
+    <a href="/renwen/test-book/2.html" id="BookNext" class="chapter-nav-btn next-btn" title="测试书名 第二章 相遇">
+      <div class="nav-content"><span class="nav-label">下一章 ›</span><span class="nav-title">第二章 相遇</span></div>
+    </a>
+  </nav>
 
   <div id="toc-container">
     <h2 class="toc-title">章节目录</h2>
