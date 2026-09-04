@@ -201,6 +201,12 @@ class Segmenter:
     def __init__(self, userdict: Path | None = None) -> None:
         import jieba
 
+        # Сказать это можно только здесь. Jieba ставит своему логгеру DEBUG при
+        # импорте, а импортируется он лениво — то есть уже после настройки
+        # логирования, которая от этого ничего не решает. Четыре строки про
+        # сборку префиксного словаря на каждом старте не про нас.
+        jieba.setLogLevel(logging.INFO)
+
         self._dt = jieba.Tokenizer()
         if userdict is not None and userdict.exists():
             self._dt.load_userdict(str(userdict))
