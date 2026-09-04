@@ -52,6 +52,20 @@ cd backend
 DATA_DIR=/opt/chinese-reader/data ../venv/bin/alembic upgrade head
 REMOTE
 
+say "обновляю юниты"
+# Юниты живут в /etc/systemd/system, а выкладка синхронизирует только
+# /opt/chinese-reader/deploy — то есть правка юнита сама по себе не доезжала
+# никогда. Замечено на --timeout-graceful-shutdown: файл в репозитории
+# изменился, systemd продолжал работать по старому, и понять это можно было
+# только по поведению. Установка идемпотентна, перезапуск идёт следом.
+ssh "$TARGET" 'bash -s' <<'REMOTE'
+set -euo pipefail
+sudo install -m 644 /opt/chinese-reader/deploy/chinese-reader.service /etc/systemd/system/
+sudo install -m 644 /opt/chinese-reader/deploy/chinese-reader-backup.service /etc/systemd/system/
+sudo install -m 644 /opt/chinese-reader/deploy/chinese-reader-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+REMOTE
+
 say "перезапускаю сервис"
 ssh "$TARGET" 'sudo systemctl restart chinese-reader && sleep 2 && systemctl is-active chinese-reader'
 
