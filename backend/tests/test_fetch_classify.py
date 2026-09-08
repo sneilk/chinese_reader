@@ -7,7 +7,7 @@
 import pytest
 
 from app.domain import ErrorKind
-from app.fetchers.base import classify
+from app.fetchers.base import classify, classify_navigation_error
 
 CHALLENGE_TITLE = "Just a moment..."
 
@@ -49,3 +49,52 @@ def test_headers_case_insensitive():
 def test_challenge_wins_over_404():
     """Порядок проверок: челлендж важнее кода, иначе он потеряется в 403/404."""
     assert classify(404, CHALLENGE_TITLE, {}) is ErrorKind.CHALLENGE
+
+
+# --- отказы навигации: HTTP-ответа не случилось вовсе ---
+#
+# Тип исключения тут не помогает. `TimeoutError` Playwright бросает только на
+# своём таймауте навигации; `net::ERR_TIMED_OUT` — это отказ сети, и приезжает
+# он обычной ошибкой. Пока разбирали по типу, читатель на моргнувшем вайфае
+# получал «покажите разработчику» вместо «попробуйте ещё раз».
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        # Сеть не дотянулась — лечится повтором.
+        (
+            "Page.goto: net::ERR_TIMED_OUT at https://novelarrow.com/chapter/x/45",
+            ErrorKind.FETCH_TIMEOUT,
+        ),
+        ("Page.goto: net::ERR_CONNECTION_TIMED_OUT", ErrorKind.FETCH_TIMEOUT),
+        ("Page.goto: net::ERR_CONNECTION_REFUSED", ErrorKind.FETCH_TIMEOUT),
+        ("Page.goto: net::ERR_CONNECTION_RESET", ErrorKind.FETCH_TIMEOUT),
+        ("Page.goto: net::ERR_EMPTY_RESPONSE", ErrorKind.FETCH_TIMEOUT),
+        ("Page.goto: net::ERR_INTERNET_DISCONNECTED", ErrorKind.FETCH_TIMEOUT),
+        ("Page.goto: net::ERR_NETWORK_CHANGED", ErrorKind.FETCH_TIMEOUT),
+        # Адрес не разрешился — дело в самом адресе, повтор не поможет.
+        (
+            "Page.goto: net::ERR_NAME_NOT_RESOLVED at https://opechatka.example/",
+            ErrorKind.NOT_FOUND,
+        ),
+        # Наша сторона: браузер упал, страницу закрыли.
+        ("Target page, context or browser has been closed", ErrorKind.ADAPTER_ERROR),
+        ("Protocol error (Page.navigate): Session closed.", ErrorKind.ADAPTER_ERROR),
+        ("", ErrorKind.ADAPTER_ERROR),
+    ],
+)
+def test_classify_navigation_error(message, expected):
+    assert classify_navigation_error(message) is expected
+
+
+def test_navigation_error_is_case_insensitive():
+    """Chromium пишет код прописными, но полагаться на регистр незачем."""
+    assert classify_navigation_error("net::err_timed_out") is ErrorKind.FETCH_TIMEOUT
+
+
+def test_network_failure_is_not_reported_as_our_bug():
+    """Тот самый случай с бою: адрес был живой, отказала сеть."""
+    real = "Page.goto: net::ERR_TIMED_OUT at https://novelarrow.com/chapter/the-last-silver/45"
+
+    assert classify_navigation_error(real) is not ErrorKind.ADAPTER_ERROR

@@ -26,6 +26,14 @@ import {
 } from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 import { describeBrowserCheck } from '../errors'
+import {
+  THEME_ORDER,
+  applyTheme,
+  describeTheme,
+  loadTheme,
+  saveTheme,
+  type ThemeChoice,
+} from '../theme'
 
 interface Check {
   label: string
@@ -261,6 +269,46 @@ function BrowserProbe() {
   )
 }
 
+/**
+ * Выбор темы.
+ *
+ * Тёмная — основная: читают вечером и подолгу. Но системная настройка и
+ * настройка читалки — разные вещи: в списке приложений светлое всё, а читают
+ * всё равно в тёмном, и до сих пор добиться этого было нельзя никак.
+ *
+ * Три состояния, а не два: «как в системе» — это не «светлая», даже когда
+ * система светлая прямо сейчас. Выбор переживает перезагрузку, потому что
+ * вывести его неоткуда — он существует только потому, что его сделали.
+ */
+function ThemePicker() {
+  const [choice, setChoice] = useState<ThemeChoice>(loadTheme)
+
+  function choose(next: ThemeChoice) {
+    setChoice(next)
+    saveTheme(next)
+    applyTheme(next)
+  }
+
+  return (
+    <div className="setting">
+      <div className="setting__label">Тема</div>
+      <div className="switch" role="group" aria-label="Тема оформления">
+        {THEME_ORDER.map((option) => (
+          <button
+            key={option}
+            type="button"
+            className={`switch__option${option === choice ? ' is-selected' : ''}`}
+            aria-pressed={option === choice}
+            onClick={() => choose(option)}
+          >
+            {describeTheme(option)}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function DiagnosticsScreen() {
   const [data, setData] = useState<Diagnostics | null>(null)
   const [error, setError] = useState<ApiError | null>(null)
@@ -277,16 +325,28 @@ export function DiagnosticsScreen() {
 
   useEffect(load, [])
 
+  // Тема — настройка местная, и она обязана переключаться даже когда сервис
+  // лёг: смотреть на белый экран, пока чинишь бэкенд, незачем. Поэтому
+  // picker стоит выше ранних возвратов, а не внутри удачной ветки.
   if (error) {
     return (
       <>
         <h1>Состояние</h1>
+        <ThemePicker />
         <ErrorNote kind={error.kind} detail={error.message} onRetry={load} />
       </>
     )
   }
 
-  if (!data) return <p className="muted">Загружаю…</p>
+  if (!data) {
+    return (
+      <>
+        <h1>Состояние</h1>
+        <ThemePicker />
+        <p className="muted">Загружаю…</p>
+      </>
+    )
+  }
 
   const checks = buildChecks(data)
   const broken = checks.filter((c) => !c.ok)
@@ -294,6 +354,8 @@ export function DiagnosticsScreen() {
   return (
     <>
       <h1>Состояние</h1>
+
+      <ThemePicker />
 
       <p className="muted">
         {broken.length === 0

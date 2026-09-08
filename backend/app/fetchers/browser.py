@@ -43,7 +43,12 @@ from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from app.config import settings
 from app.domain import ErrorKind
-from app.fetchers.base import FetchFailure, FetchResult, classify
+from app.fetchers.base import (
+    FetchFailure,
+    FetchResult,
+    classify,
+    classify_navigation_error,
+)
 
 log = logging.getLogger(__name__)
 
@@ -291,7 +296,9 @@ class BrowserFetcher:
             except PlaywrightTimeout as e:
                 raise FetchFailure(ErrorKind.FETCH_TIMEOUT, str(e)[:200]) from e
             except PlaywrightError as e:
-                raise FetchFailure(ErrorKind.ADAPTER_ERROR, str(e)[:200]) from e
+                # Тип исключения здесь ничего не решает: отказ сети приезжает
+                # обычной ошибкой с кодом Chromium внутри текста.
+                raise FetchFailure(classify_navigation_error(str(e)), str(e)[:200]) from e
 
             if resp is None:
                 raise FetchFailure(ErrorKind.ADAPTER_ERROR, "навигация не вернула ответ")

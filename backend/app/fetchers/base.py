@@ -45,6 +45,50 @@ class FetchFailure(Exception):
         self.detail = detail
 
 
+# Сетевые отказы Chromium. Приезжают текстом внутри обычной ошибки Playwright,
+# и по типу исключения их не отличить: `TimeoutError` он бросает только когда
+# истёк **свой** таймаут навигации, а `net::ERR_TIMED_OUT` — это уже отказ сети,
+# и он приходит обычным `Error`.
+#
+# Различать их приходится потому, что читателю они говорят разное. «Не удалось
+# разобрать страницу, покажите разработчику» на моргнувшем вайфае — это совет
+# идти не туда: сайт просто не ответил, и лечится это повтором.
+_NETWORK_ERRORS = (
+    "err_timed_out",
+    "err_connection_timed_out",
+    "err_connection_refused",
+    "err_connection_reset",
+    "err_connection_closed",
+    "err_connection_aborted",
+    "err_empty_response",
+    "err_socket_not_connected",
+    "err_network_changed",
+    "err_internet_disconnected",
+    "err_address_unreachable",
+    "err_proxy_connection_failed",
+)
+
+# Адрес не разрешился — дело не в сети, а в самом адресе.
+_ADDRESS_ERRORS = ("err_name_not_resolved", "err_name_resolution_failed")
+
+
+def classify_navigation_error(message: str) -> ErrorKind:
+    """Во что превратить ошибку навигации браузера.
+
+    Отдельно от `classify`, потому что вход другой: там HTTP-ответ, здесь его
+    не случилось вовсе. Общее у них одно — и то и другое решает, что читатель
+    увидит вместо главы, и поэтому проверяется без браузера.
+    """
+    low = (message or "").lower()
+    if any(code in low for code in _ADDRESS_ERRORS):
+        return ErrorKind.NOT_FOUND
+    if any(code in low for code in _NETWORK_ERRORS):
+        return ErrorKind.FETCH_TIMEOUT
+    # Всё остальное — действительно наша сторона: упавший браузер, закрытая
+    # страница, неверный аргумент.
+    return ErrorKind.ADAPTER_ERROR
+
+
 def classify(status: int, title: str, headers: dict[str, str] | None = None) -> ErrorKind | None:
     """Определить причину отказа. `None` означает, что страница годная.
 

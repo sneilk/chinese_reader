@@ -9,6 +9,26 @@
     <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#16181c" />
     <title>chinese_reader</title>
+    <!--
+      Выбор темы применяется до первой отрисовки, а не в React. Иначе тот, кто
+      выбрал светлую при тёмной системе, каждый раз ловил бы вспышку чужой
+      палитры: скрипт приложения грузится уже после того, как страница
+      покрашена. Отсюда же inline: внешний файл — ещё один запрос до отрисовки.
+
+      Всё остальное про тему живёт в src/theme.ts; здесь только эти три строки,
+      и ключ хранилища обязан совпадать с тамошним.
+    -->
+    <script>
+      try {
+        var t = localStorage.getItem('chinese_reader.theme')
+        if (t === 'dark' || t === 'light') {
+          document.documentElement.setAttribute('data-theme', t)
+          document.documentElement.style.colorScheme = t
+        }
+      } catch (e) {
+        /* приватный режим: остаётся системная тема */
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

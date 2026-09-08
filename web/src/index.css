@@ -12,21 +12,26 @@
  */
 
 :root {
+  /* Обе схемы объявлены, тёмная первой. При выборе «как в системе» решает
+     система; выбор руками переопределяет это свойство на корне документа — и
+     больше ничего, вся палитра переключается вместе с ним (`src/theme.ts`). */
   color-scheme: dark light;
 
-  /* Тёмная тема. Фон не чёрный: чистый чёрный даёт лишний контраст и ореолы
-     вокруг светлых иероглифов. */
-  --bg: #16181c;
-  --bg-raised: #1e2127;
-  --bg-sunken: #101216;
-  --text: #e6e6e8;
-  --text-dim: #9aa0aa;
-  --border: #2c3038;
-  --accent: #7aa2f7;
-  --accent-contrast: #0d1117;
-  --danger: #f2777a;
-  --warning: #e0af68;
-  --ok: #9ece6a;
+  /* Пара значений на токен: `light-dark(светлое, тёмное)`. Так палитра
+     существует в одном месте, а не двумя копиями, которые однажды разъедутся.
+     Тёмный фон не чёрный: чистый чёрный даёт лишний контраст и ореолы вокруг
+     светлых иероглифов. Светлый не белый: белый лист на солнце слепит. */
+  --bg: light-dark(#fbfaf8, #16181c);
+  --bg-raised: light-dark(#fff, #1e2127);
+  --bg-sunken: light-dark(#f0eeea, #101216);
+  --text: light-dark(#1b1a18, #e6e6e8);
+  --text-dim: light-dark(#605c56, #9aa0aa);
+  --border: light-dark(#ddd9d2, #2c3038);
+  --accent: light-dark(#2f5fd0, #7aa2f7);
+  --accent-contrast: light-dark(#fff, #0d1117);
+  --danger: light-dark(#b3261e, #f2777a);
+  --warning: light-dark(#8a5a00, #e0af68);
+  --ok: light-dark(#2e6b2e, #9ece6a);
 
   /* Шкала отступов: одна на всё приложение, кратна четырём. */
   --space-1: 4px;
@@ -76,20 +81,17 @@
   text-size-adjust: 100%;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #fbfaf8;
-    --bg-raised: #fff;
-    --bg-sunken: #f0eeea;
-    --text: #1b1a18;
-    --text-dim: #605c56;
-    --border: #ddd9d2;
-    --accent: #2f5fd0;
-    --accent-contrast: #fff;
-    --danger: #b3261e;
-    --warning: #8a5a00;
-    --ok: #2e6b2e;
-  }
+/* Выбор темы руками. Эти два правила существуют не для красоты: сборщик
+   разворачивает `light-dark()` в пару переменных и по умолчанию завязывает их
+   на один только `prefers-color-scheme`. Пока их не было, переключатель менял
+   `color-scheme` в инлайновом стиле, а собранный CSS его не слушал — то есть
+   в бою тема не переключалась вовсе, хотя в разработке работала. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
 }
 
 * {
@@ -337,6 +339,24 @@ a {
 .readerbar__stop {
   margin-inline-start: auto;
   color: var(--text-dim);
+}
+
+/* --- настройка на экране состояния --- */
+
+/* Переключатель темы переиспользует .switch от вида главы: это одна и та же
+   вещь — выбор из нескольких взаимоисключающих, — и заводить ей вторую
+   внешность значило бы сказать, что она другая. */
+.setting {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  margin-bottom: var(--space-5);
+}
+
+.setting__label {
+  color: var(--text-dim);
+  font-size: 0.9rem;
 }
 
 /* --- сообщения --- */
@@ -1174,6 +1194,17 @@ a {
   }
 
   .content {
+    padding-inline: var(--space-3);
+  }
+
+  /* Бренд не помещается: он и четыре ссылки — это около 519px при экране в
+     390. Уходит именно он, потому что ведёт на экран ввода, куда и так ведёт
+     ссылка «Глава»: теряется украшение, а не дорога. */
+  .topbar__brand {
+    display: none;
+  }
+
+  .topbar {
     padding-inline: var(--space-3);
   }
 }
