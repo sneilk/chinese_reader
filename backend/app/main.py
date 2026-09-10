@@ -26,6 +26,7 @@ from app.providers.speech import YandexSpeech
 from app.providers.translate import YandexTranslate
 from app.services import walks
 from app.services.pipeline import recover_interrupted
+from app.singleton import claim
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +61,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Сегментатор один и он китайский: английскому словарь для резки не нужен
     вовсе (`lang/segment_en.py`), поэтому второго объекта здесь нет.
     """
+    # Проверка до всего остального: если место занято, дальше мы будем
+    # ломать чужой профиль браузера, а не свой.
+    claim(settings.data_dir)
+
     app.state.session_factory = SessionLocal
     app.state.segmenter = Segmenter(settings.userdict_path)
     app.state.fetcher = BrowserFetcher()

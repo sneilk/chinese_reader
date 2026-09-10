@@ -45,6 +45,9 @@ _CHAPTER_SUFFIX = ".html"
 
 class ShuchengAdapter:
     name = "51shucheng"
+    # Адрес главы — это путь `/{жанр}/{книга}/{номер}.html`;
+    # запрос на нём ничего не значит (sources.md §1).
+    keeps_query = False
     lang = Language.ZH
 
     def matches(self, url: str) -> bool:

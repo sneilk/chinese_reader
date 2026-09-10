@@ -32,8 +32,10 @@ import logging
 from urllib.parse import urlparse
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.adapters.base import canonical_url
 from app.adapters.registry import pick_adapter
 from app.db.models import Chapter, Document, Source
 from app.domain import ChapterStatus, Language
@@ -41,9 +43,23 @@ from app.domain import ChapterStatus, Language
 log = logging.getLogger(__name__)
 
 
+def canonical(url: str) -> str:
+    """Адрес главы в том виде, в каком он считается её тождеством.
+
+    Правило запроса объявляет адаптер сайта — он один знает, значит ли тот
+    что-нибудь по эту сторону (`adapters/base.canonical_url`).
+    """
+    return canonical_url(url, keep_query=pick_adapter(url).keeps_query)
+
+
 def book_prefix(url: str) -> str:
-    """Адрес книги: URL главы без последнего сегмента."""
-    parsed = urlparse(url)
+    """Адрес книги: канонический URL главы без последнего сегмента.
+
+    Считается от канонического, а не от того, что ввели: иначе `www.` в
+    ссылке заводил бы вторую книгу поверх первой, и главы одного романа
+    оказывались бы в двух разных оглавлениях.
+    """
+    parsed = urlparse(canonical(url))
     path = parsed.path.rsplit("/", 1)[0]
     return f"{parsed.scheme}://{parsed.netloc}{path}/"
 
@@ -103,8 +119,20 @@ def _place_in_book(session: Session, document: Document, url: str) -> int | None
     return 0 if not loaded else None
 
 
-def get_or_create_chapter(session: Session, url: str) -> tuple[Chapter, bool]:
-    """Найти главу по URL или завести новую. Второе значение — «завели сейчас»."""
+def get_or_create_chapter(session: Session, raw_url: str) -> tuple[Chapter, bool]:
+    """Найти главу по URL или завести новую. Второе значение — «завели сейчас».
+
+    Между проверкой и вставкой есть щель, и она не теоретическая: выгрузка
+    книги и «ещё N глав» с экрана чтения — две фоновые задачи, и обе идут по
+    одной цепочке. Вторая, придя к той же главе, получала `IntegrityError` на
+    `chapters.url UNIQUE`, обход обрывался, а причиной читателю показывали
+    `adapter_error` — то есть «покажите разработчику» вместо «эта глава уже
+    есть».
+
+    Уникальный ключ для того и стоит: он не даёт дублю появиться, а нам —
+    повод перечитать. Кто успел первым, того запись и берём.
+    """
+    url = canonical(raw_url)
     existing = session.scalars(select(Chapter).where(Chapter.url == url)).first()
     if existing is not None:
         return existing, False
@@ -119,6 +147,17 @@ def get_or_create_chapter(session: Session, url: str) -> tuple[Chapter, bool]:
         status=ChapterStatus.FETCHING,
     )
     session.add(chapter)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raced = session.scalars(select(Chapter).where(Chapter.url == url)).first()
+        if raced is None:
+            # Ключ нарушен, но не по этому адресу — значит дело не в гонке, и
+            # молчать нельзя: наверху разберутся лучше, чем мы здесь угадаем.
+            raise
+        log.info("глава %s уже заведена параллельно: %s", raced.id, url)
+        return raced, False
+
     log.info("заведена глава %s (%s, №%s): %s", chapter.id, lang, chapter.idx, url)
     return chapter, True

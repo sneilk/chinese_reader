@@ -28,6 +28,7 @@ URL, отдельный конвейер. Путать их нельзя: скл
 import re
 from dataclasses import dataclass, field
 from typing import Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 from app.domain import ErrorKind, Language
 
@@ -40,6 +41,9 @@ MIN_CHAPTER_HAN = 100
 # То же для латиницы. Английская глава веб-новеллы — 1500–4000 слов; сотня
 # слов на странице означает аннотацию, шапку или заглушку, но не главу.
 MIN_CHAPTER_WORDS = 100
+
+#: Порты, которые в адресе ничего не добавляют.
+_DEFAULT_PORTS = {"http": (80,), "https": (443,)}
 
 
 def han_count(text: str) -> int:
@@ -103,6 +107,54 @@ class AdapterFailure(Exception):
         self.detail = detail
 
 
+def canonical_url(url: str, *, keep_query: bool) -> str:
+    """Адрес в том виде, в каком он считается тождеством главы.
+
+    Тождество главы — это `chapters.url`, и держится на нём всё: повторный
+    `POST` не ходит на сайт, обход не заводит дубль, книга собирается по
+    общему префиксу. Пока сравнивались сырые строки, один и тот же текст
+    заводился дважды от любой мелочи: `?restore=1` в ссылке (novelarrow
+    отдаёт такие сам), `www.` против голого хоста, `http` против `https` —
+    а книга при этом раздваивалась вместе с главой.
+
+    Правила выбраны так, чтобы менять только запись, но не адрес, по которому
+    мы пойдём:
+
+    * схема и хост в нижний регистр — регистр в них не значим по RFC 3986;
+    * `www.` долой — на наших источниках это тот же сайт, и адаптер принимает
+      оба написания;
+    * порт по умолчанию долой — `:443` у https ничего не добавляет;
+    * фрагмент долой — он вообще не уезжает на сервер;
+    * пустой путь становится `/`.
+
+    Схему `http` в `https` **не** переписываем: это уже не запись, а другой
+    запрос, и сайту, живущему на голом http, он не пройдёт. Редирект отработает
+    сам, а `next_chapter_url` мы и так считаем от адреса, на котором в итоге
+    оказались.
+
+    `keep_query` решает адаптер: он один знает, значит ли что-нибудь запрос на
+    его сайте. У обоих наших источников адрес главы — это путь, и `?restore=1`
+    там лишь состояние интерфейса. У generic-фолбэка сайт неизвестен, и
+    выбрасывать запрос нельзя: у кого-то в нём и лежит номер страницы.
+    """
+    parsed = urlsplit(url.strip())
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+
+    netloc = host
+    if parsed.port is not None and parsed.port not in _DEFAULT_PORTS.get(parsed.scheme.lower(), ()):
+        netloc = f"{host}:{parsed.port}"
+
+    return urlunsplit((
+        parsed.scheme.lower(),
+        netloc,
+        parsed.path or "/",
+        parsed.query if keep_query else "",
+        "",
+    ))
+
+
 def require_text(chapter: ChapterRaw, where: str) -> ChapterRaw:
     """Проверить, что текста набралось на главу. Иначе — `empty_extract`."""
     if chapter.size < chapter.min_size:
@@ -116,6 +168,10 @@ def require_text(chapter: ChapterRaw, where: str) -> ChapterRaw:
 
 class SiteAdapter(Protocol):
     name: str
+    #: Значит ли что-нибудь строка запроса в адресе главы на этом сайте.
+    #: `False` — адрес главы это путь, а запрос лишь состояние интерфейса, и
+    #: в тождество главы он входить не должен.
+    keeps_query: bool
     #: Язык оригинала сайта. `None` — «как получится», решает содержимое
     #: страницы; так устроен только generic-фолбэк.
     lang: Language | None

@@ -64,7 +64,7 @@ from app.lang.sentences import split_sentences
 from app.providers.translate import TARGET_LANG, TranslateFailure, Translator
 from app.services import budget, walks
 from app.services.books import chain_tail
-from app.services.chapters import get_or_create_chapter
+from app.services.chapters import canonical, get_or_create_chapter
 
 log = logging.getLogger(__name__)
 
@@ -228,7 +228,7 @@ async def fetch_pages(fetcher: Fetcher, url: str, adapter: SiteAdapter) -> Chapt
         # адрес следующей главы сохраняем и отдаём наружу.
         if page.next_chapter_url:
             page = replace(
-                page, next_chapter_url=urljoin(result.url, page.next_chapter_url)
+                page, next_chapter_url=canonical(urljoin(result.url, page.next_chapter_url))
             )
         pages.append(page)
 
@@ -449,7 +449,7 @@ async def relink_chapter(session: Session, chapter: Chapter, fetcher: Fetcher) -
         log.info("глава %s: сайт ссылки вперёд не даёт, книга кончилась", chapter.id)
         return Relinked()
 
-    chapter.next_chapter_url = urljoin(result.url, raw.next_chapter_url)
+    chapter.next_chapter_url = canonical(urljoin(result.url, raw.next_chapter_url))
     session.commit()
     log.info("глава %s: ссылка вперёд восстановлена — %s", chapter.id, chapter.next_chapter_url)
     return Relinked(url=chapter.next_chapter_url)

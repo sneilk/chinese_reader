@@ -50,7 +50,9 @@ def count(session, model) -> int:
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
-        (SHUCHENG, "https://www.51shucheng.net/renwen/kniga/"),
+        # `www.` уходит: адрес книги считается от канонического, иначе одна
+        # книга раздваивалась бы от написания ссылки.
+        (SHUCHENG, "https://51shucheng.net/renwen/kniga/"),
         (NOVELARROW, "https://novelarrow.com/novel/the-long-cartography/"),
         ("https://example.com/one.html", "https://example.com/"),
         ("https://example.com/a/b/c/d", "https://example.com/a/b/c/"),
@@ -144,7 +146,7 @@ def test_one_source_per_site(session):
     get_or_create_chapter(session, SHUCHENG_OTHER_BOOK)
 
     assert count(session, Source) == 1
-    assert session.scalars(select(Source)).one().site == "www.51shucheng.net"
+    assert session.scalars(select(Source)).one().site == "51shucheng.net"
 
 
 def test_different_sites_get_different_sources(session):
@@ -250,3 +252,61 @@ def test_predecessor_from_another_book_does_not_count(session):
     chapter, _ = get_or_create_chapter(session, NOVELARROW)
 
     assert chapter.idx == 0, "первая глава своей книги, а не вторая чужой"
+
+
+# --- тождество главы ---
+#
+# `chapters.url` — это ключ идемпотентности: по нему повторный POST не идёт на
+# сайт, а обход не заводит дубль. Пока сравнивались сырые строки, одна и та же
+# страница заводилась дважды от любой мелочи в написании ссылки.
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "https://www.51shucheng.net/renwen/kniga/12345.html",
+        "https://51shucheng.net/renwen/kniga/12345.html",
+        "HTTPS://51shucheng.NET/renwen/kniga/12345.html",
+        "https://51shucheng.net:443/renwen/kniga/12345.html",
+        "https://51shucheng.net/renwen/kniga/12345.html#top",
+        "  https://51shucheng.net/renwen/kniga/12345.html  ",
+    ],
+)
+def test_one_chapter_however_the_link_is_written(session, variant):
+    first, created = get_or_create_chapter(session, SHUCHENG)
+    again, created_again = get_or_create_chapter(session, variant)
+
+    assert created is True
+    assert created_again is False, f"{variant} завёл вторую главу"
+    assert again.id == first.id
+    assert count(session, Chapter) == 1
+
+
+def test_query_is_dropped_where_the_site_says_it_means_nothing(session):
+    """`?restore=1` novelarrow приписывает сам — это состояние интерфейса."""
+    first, _ = get_or_create_chapter(session, NOVELARROW)
+    again, created = get_or_create_chapter(session, f"{NOVELARROW}?restore=1")
+
+    assert created is False
+    assert again.id == first.id
+
+
+def test_query_is_kept_for_an_unknown_site(session):
+    """Сайт незнаком, и в запросе может лежать номер страницы.
+
+    Выбросив его, мы склеили бы разные главы в одну — а это потеря текста,
+    которую никто не заметит. Лишний дубль дешевле.
+    """
+    first, _ = get_or_create_chapter(session, "https://example.com/story?page=1")
+    second, created = get_or_create_chapter(session, "https://example.com/story?page=2")
+
+    assert created is True
+    assert second.id != first.id
+
+
+def test_one_book_however_the_link_is_written(session):
+    """Раздвоившаяся книга — это два оглавления, и ни одно не полное."""
+    get_or_create_chapter(session, "https://www.51shucheng.net/renwen/kniga/1.html")
+    get_or_create_chapter(session, "https://51shucheng.net/renwen/kniga/2.html")
+
+    assert count(session, Document) == 1

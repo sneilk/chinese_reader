@@ -19,6 +19,10 @@ from app.domain import ErrorKind
 
 class GenericAdapter:
     name = "generic"
+    # Сайт неизвестен, и запрос может оказаться чем угодно — номером
+    # страницы в том числе. Выбросив его, мы склеили бы разные главы
+    # в одну; оставив лишний, заведём в худшем случае дубль.
+    keeps_query = True
     lang = None  # решает содержимое страницы
 
     def matches(self, url: str) -> bool:

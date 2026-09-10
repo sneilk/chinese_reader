@@ -41,6 +41,10 @@ log = logging.getLogger(__name__)
 
 class NovelarrowAdapter:
     name = "novelarrow"
+    # Адрес главы — путь `/chapter/{книга}/{слаг}`. Запрос сайт
+    # приписывает сам (`?restore=1` — «вернуться, где читал»), и в
+    # тождество главы он входить не должен: это одна и та же страница.
+    keeps_query = False
     lang = Language.EN
 
     def matches(self, url: str) -> bool:

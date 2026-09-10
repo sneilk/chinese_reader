@@ -66,3 +66,100 @@ def test_upgrade_then_downgrade(tmp_path):
     again = _alembic(["upgrade", "head"], tmp_path)
     assert again.returncode == 0, again.stderr
     assert "chapters" in _tables(db)
+
+
+# --- канонизация адресов на живых данных ---
+#
+# Миграция не меняет схему, а правит данные, и проверять её надо на данных.
+# Главное здесь — что выживает: за перевод заплачено, и выбрасывать надо ту
+# главу, за которую не платили.
+
+
+def _seed_duplicates(db: Path) -> None:
+    """Три написания одной главы, книга в двух написаниях и сохранённое слово."""
+    con = sqlite3.connect(db)
+    con.executescript(
+        """
+        INSERT INTO sources (id, kind, site, lang) VALUES (1, 'web', 'www.51shucheng.net', 'zh');
+        INSERT INTO documents (id, source_id, key, lang)
+             VALUES (1, 1, 'https://www.51shucheng.net/renwen/kniga/', 'zh'),
+                    (2, 1, 'https://51shucheng.net/renwen/kniga/', 'zh');
+
+        -- Одна и та же глава тремя способами. Богатая — вторая: у неё перевод.
+        INSERT INTO chapters
+               (id, document_id, url, lang, status, content,
+                next_chapter_url, chars_sent)
+        VALUES (1, 1, 'https://www.51shucheng.net/renwen/kniga/1.html',
+                'zh', 'segmented', 'текст', NULL, 0),
+               (2, 2, 'https://51shucheng.net/renwen/kniga/1.html',
+                'zh', 'ready', 'текст',
+                'https://www.51shucheng.net/renwen/kniga/2.html', 120),
+               (3, 1, 'HTTPS://51shucheng.NET/renwen/kniga/1.html#top',
+                'zh', 'fetching', NULL, NULL, 0);
+
+        INSERT INTO sentences (id, chapter_id, idx, start_offset, end_offset, translation)
+             VALUES (1, 2, 0, 0, 5, 'перевод'),
+                    (2, 1, 0, 0, 5, NULL);
+
+        INSERT INTO user_words (id, lang, headword, status) VALUES (1, 'zh', '窗户', 'new');
+        INSERT INTO contexts
+               (id, user_word_id, chapter_id, sentence_id,
+                sentence, offset_start, offset_end)
+        VALUES (1, 1, 1, 2, 'предложение с 窗户', 0, 2);
+        """
+    )
+    con.commit()
+    con.close()
+
+
+def test_canonical_urls_keeps_the_richest_duplicate(tmp_path):
+    assert _alembic(["upgrade", "c5a70b41e8d2"], tmp_path).returncode == 0
+    db = tmp_path / "chinese_reader.db"
+    _seed_duplicates(db)
+
+    done = _alembic(["upgrade", "head"], tmp_path)
+    assert done.returncode == 0, done.stderr
+
+    con = sqlite3.connect(db)
+    chapters = con.execute("SELECT id, url, document_id FROM chapters").fetchall()
+    assert len(chapters) == 1, "три написания одной главы должны стать одной записью"
+    survivor_id, url, document_id = chapters[0]
+
+    # Выжила та, за которую заплачено переводом.
+    assert survivor_id == 2
+    assert url == "https://51shucheng.net/renwen/kniga/1.html"
+    assert con.execute(
+        "SELECT translation FROM sentences WHERE chapter_id = ?", (survivor_id,)
+    ).fetchone()[0] == "перевод"
+
+    # Ссылка вперёд — тот же ключ, иначе соседку не найти.
+    assert con.execute(
+        "SELECT next_chapter_url FROM chapters WHERE id = ?", (survivor_id,)
+    ).fetchone()[0] == "https://51shucheng.net/renwen/kniga/2.html"
+
+    # Книга одна, и выжившая глава лежит в ней.
+    books = con.execute("SELECT id, key FROM documents").fetchall()
+    assert len(books) == 1
+    assert books[0][1] == "https://51shucheng.net/renwen/kniga/"
+    assert document_id == books[0][0]
+
+    assert con.execute("SELECT site FROM sources").fetchone()[0] == "51shucheng.net"
+    con.close()
+
+
+def test_canonical_urls_does_not_touch_the_dictionary(tmp_path):
+    """Слово переживает удаление главы — ровно затем контекст и хранит копию."""
+    assert _alembic(["upgrade", "c5a70b41e8d2"], tmp_path).returncode == 0
+    db = tmp_path / "chinese_reader.db"
+    _seed_duplicates(db)
+    assert _alembic(["upgrade", "head"], tmp_path).returncode == 0
+
+    con = sqlite3.connect(db)
+    assert con.execute("SELECT COUNT(*) FROM user_words").fetchone()[0] == 1
+    sentence, chapter_id = con.execute(
+        "SELECT sentence, chapter_id FROM contexts WHERE id = 1"
+    ).fetchone()
+
+    assert sentence == 'предложение с 窗户', "текст контекста обязан уцелеть"
+    assert chapter_id is None, "ссылка на удалённую главу обнуляется, а не висит"
+    con.close()
