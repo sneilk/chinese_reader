@@ -9,18 +9,23 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from typing import Annotated
+from typing import Annotated, TypeVar
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from app.db.base import Base
 from app.db.session import SessionLocal
+from app.domain import ErrorKind
 from app.fetchers.base import Fetcher
 from app.lang.segment import Segmenter
 from app.providers.speech import Synthesizer
 from app.providers.translate import Translator
 
 SessionFactory = Callable[[], Session]
+
+#: Любая модель: помощник ниже одинаково годится и главе, и книге.
+T = TypeVar("T", bound=Base)
 
 
 def get_session_factory(request: Request) -> SessionFactory:
@@ -63,6 +68,21 @@ def get_translator(request: Request) -> Translator | None:
 def get_synthesizer(request: Request) -> Synthesizer | None:
     """`None` означает «озвучка не настроена» — глава читается, но не звучит."""
     return getattr(request.app.state, "synthesizer", None)
+
+
+def get_or_404(session: Session, model: type[T], entity_id: int) -> T:
+    """Достать запись или отказать 404 в общем формате.
+
+    Форма отказа тут важнее экономии строк. `kind` у ответа обязан быть
+    `not_found`, потому что по нему фронт подбирает объяснение; напиши здесь
+    что-нибудь своё — и читатель увидит «непонятную ошибку» вместо «главы по
+    этому адресу нет». Пока копий было две, разойтись они не успели, но
+    третья ручка списывала бы уже с той, что попалась под руку.
+    """
+    entity = session.get(model, entity_id)
+    if entity is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, ErrorKind.NOT_FOUND)
+    return entity
 
 
 # Через Annotated, а не Depends в значении по умолчанию: так ручки читаются

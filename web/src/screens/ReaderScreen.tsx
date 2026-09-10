@@ -27,7 +27,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ApiError, api, isPending, isReadable } from '../api'
+import { api, isPending, isReadable } from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 import { describeStatus } from '../errors'
 import { ChapterText } from '../reader/ChapterText'
@@ -42,6 +42,7 @@ import { contextOf, useSelection } from '../reader/useSelection'
 import { useSpeech } from '../reader/useSpeech'
 import { useTokenGestures } from '../reader/useTokenGestures'
 import { hrefFor, navigate } from '../router'
+import { useAction } from '../useAction'
 import { useChapter } from '../useChapter'
 
 /** Держать озвучиваемую фразу на виду: слушать главу, глядя в её начало, незачем. */
@@ -64,15 +65,15 @@ function useFollowSpeech(sentence: number, playing: boolean): void {
  */
 const FALLBACK_AHEAD = 10
 
+/** Действия главы. Ключ нужен кнопкам: «Перевожу…» и «Загружаю…» — разные подписи. */
+type ChapterAction = 'translate' | 'next' | 'ahead' | 'relink'
+
 export function ReaderScreen({ id }: { id: number }) {
   const { chapter, requestError, loading, reload } = useChapter(id)
-  const [retrying, setRetrying] = useState(false)
-  const [retryError, setRetryError] = useState<ApiError | null>(null)
-  const [loadingNext, setLoadingNext] = useState(false)
+  const action = useAction<ChapterAction>()
   const [ahead, setAhead] = useState(0)
   const [maxAhead, setMaxAhead] = useState(FALLBACK_AHEAD)
   const [aheadNote, setAheadNote] = useState<string | null>(null)
-  const [relinking, setRelinking] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Предел спрашиваем у сервера: он же его и применяет. Отказ глушим — без
@@ -176,18 +177,11 @@ export function ReaderScreen({ id }: { id: number }) {
     }
   }
 
-  async function retranslate() {
-    setRetrying(true)
-    setRetryError(null)
-    try {
+  const retranslate = () =>
+    action.run('translate', async () => {
       await api.translateChapter(id)
       await reload()
-    } catch (e) {
-      setRetryError(e instanceof ApiError ? e : new ApiError('network', String(e)))
-    } finally {
-      setRetrying(false)
-    }
-  }
+    })
 
   /**
    * Загрузить следующую главу и перейти к ней сразу.
@@ -196,20 +190,13 @@ export function ReaderScreen({ id }: { id: number }) {
    * прогресс, а стоять на прочитанной главе со спиннером — значит смотреть на
    * то, что уже прочитано.
    */
-  async function openNext() {
-    if (!chapter?.next_url || loadingNext) return
-    setLoadingNext(true)
-    setRetryError(null)
-    try {
+  const openNext = () =>
+    action.run('next', async () => {
+      if (!chapter?.next_url) return
       const accepted = await api.createChapter(chapter.next_url)
       speech.stop()
       navigate({ name: 'chapter', id: accepted.id })
-    } catch (e) {
-      setRetryError(e instanceof ApiError ? e : new ApiError('network', String(e)))
-    } finally {
-      setLoadingNext(false)
-    }
-  }
+    })
 
   /**
    * Загрузить пачку глав вперёд, оставшись на этой.
@@ -218,23 +205,16 @@ export function ReaderScreen({ id }: { id: number }) {
    * ней не ходит, а продолжает цепочку с неё (RFC §4). Уходить никуда не надо
    * — читатель дочитывает эту главу, пока грузятся следующие.
    */
-  async function loadAhead() {
-    if (!chapter || ahead < 1 || loadingNext) return
-    setLoadingNext(true)
-    setRetryError(null)
-    setAheadNote(null)
-    try {
+  const loadAhead = () =>
+    action.run('ahead', async () => {
+      if (!chapter || ahead < 1) return
+      setAheadNote(null)
       await api.createChapter(chapter.url, ahead)
       setAheadNote(
         `Загружаю ${ahead} гл. вперёд — можно читать дальше, работа идёт фоном. ` +
           'Загруженное появится в оглавлении книги.',
       )
-    } catch (e) {
-      setRetryError(e instanceof ApiError ? e : new ApiError('network', String(e)))
-    } finally {
-      setLoadingNext(false)
-    }
-  }
+    })
 
   /**
    * Спросить у сайта заново, куда ведёт глава.
@@ -242,18 +222,11 @@ export function ReaderScreen({ id }: { id: number }) {
    * Нужно главам, загруженным до того, как адаптер научился читать ссылку
    * вперёд: у них её нет и само не появится. Текст и переводы не трогаются.
    */
-  async function relink() {
-    setRelinking(true)
-    setRetryError(null)
-    try {
+  const relink = () =>
+    action.run('relink', async () => {
       await api.relinkChapter(id)
       await reload()
-    } catch (e) {
-      setRetryError(e instanceof ApiError ? e : new ApiError('network', String(e)))
-    } finally {
-      setRelinking(false)
-    }
-  }
+    })
 
   if (requestError) {
     return <ErrorNote kind={requestError.kind} detail={requestError.message} onRetry={reload} />
@@ -278,7 +251,7 @@ export function ReaderScreen({ id }: { id: number }) {
         <ErrorNote
           kind={chapter.error.kind}
           detail={chapter.error.message}
-          busy={retrying}
+          busy={action.busy === 'translate'}
           onRetry={reload}
         />
       )}
@@ -296,14 +269,14 @@ export function ReaderScreen({ id }: { id: number }) {
           <button
             className="button button--quiet"
             onClick={() => void retranslate()}
-            disabled={retrying}
+            disabled={action.working}
           >
-            {retrying ? 'Перевожу…' : 'Дозалить перевод'}
+            {action.busy === 'translate' ? 'Перевожу…' : 'Дозалить перевод'}
           </button>
         </div>
       )}
 
-      {retryError && <ErrorNote kind={retryError.kind} detail={retryError.message} />}
+      {action.error && <ErrorNote kind={action.error.kind} detail={action.error.message} />}
 
       {readable && <ReaderBar mode={mode} onMode={setMode} speech={speech} />}
 
@@ -348,9 +321,9 @@ export function ReaderScreen({ id }: { id: number }) {
               className="button"
               type="button"
               onClick={() => void openNext()}
-              disabled={loadingNext}
+              disabled={action.working}
             >
-              {loadingNext ? 'Загружаю…' : 'Загрузить следующую →'}
+              {action.busy === 'next' ? 'Загружаю…' : 'Загрузить следующую →'}
             </button>
           ) : (
             // Ссылки нет по одной из двух причин, и различить их можно только
@@ -362,9 +335,9 @@ export function ReaderScreen({ id }: { id: number }) {
                 className="button button--quiet"
                 type="button"
                 onClick={() => void relink()}
-                disabled={relinking}
+                disabled={action.working}
               >
-                {relinking ? 'Спрашиваю сайт…' : 'Найти ссылку заново'}
+                {action.busy === 'relink' ? 'Спрашиваю сайт…' : 'Найти ссылку заново'}
               </button>
             </div>
           )}
@@ -393,10 +366,10 @@ export function ReaderScreen({ id }: { id: number }) {
                 onChange={(e) =>
                   setAhead(Math.min(maxAhead, Math.max(0, Number(e.target.value))))
                 }
-                disabled={loadingNext}
+                disabled={action.working}
               />
-              <button className="button button--quiet" type="submit" disabled={loadingNext || !ahead}>
-                {loadingNext ? 'Ставлю…' : `Ещё ${ahead || ''} гл.`.trim()}
+              <button className="button button--quiet" type="submit" disabled={action.working || !ahead}>
+                {action.busy === 'ahead' ? 'Ставлю…' : `Ещё ${ahead || ''} гл.`.trim()}
               </button>
               <span className="muted label">до {maxAhead}; всю книгу — с экрана книги</span>
             </form>

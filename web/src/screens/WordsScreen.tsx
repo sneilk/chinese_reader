@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiError, api, type UserWord } from '../api'
+import { ApiError, asApiError, api, type UserWord } from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 
 const PAGE = 50
@@ -153,7 +153,7 @@ export function WordsScreen() {
       setError(null)
     } catch (e) {
       if (mine === requestId.current) {
-        setError(e instanceof ApiError ? e : new ApiError('network', String(e)))
+        setError(asApiError(e))
       }
     } finally {
       if (mine === requestId.current) setLoading(false)

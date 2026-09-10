@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { ApiError, api, isPending, type Chapter } from './api'
+import { ApiError, asApiError, api, isPending, type Chapter } from './api'
 
 const POLL_MS = 1500
 
@@ -33,7 +33,7 @@ export function useChapter(id: number | null): ChapterState {
       setChapter(await api.getChapter(id))
       setRequestError(null)
     } catch (e) {
-      setRequestError(e instanceof ApiError ? e : new ApiError('network', String(e)))
+      setRequestError(asApiError(e))
     } finally {
       setLoading(false)
     }

@@ -28,6 +28,7 @@ from app.api.deps import (
     SessionFactory,
     SynthesizerDep,
     TranslatorDep,
+    get_or_404,
 )
 from app.api.schemas import ChapterAccepted, ChapterCreate, ChapterOut
 from app.db.models import Chapter, Sentence
@@ -66,29 +67,37 @@ async def _run_pipeline_job(
     `fetch=False` — глава уже загружена, и обход начинается прямо с неё. Без
     этого «догрузить ещё десять» стоило бы лишнего похода на сайт за тем, что
     и так лежит в базе (концепция §1.3).
-    """
-    with factory() as session:
-        chapter = session.get(Chapter, chapter_id)
-        if chapter is None:
-            log.warning("фоновая задача: глава %s исчезла", chapter_id)
-            return
 
-        if fetch:
-            await run_chapter_pipeline(
-                session, chapter, fetcher=fetcher, segmenter=segmenter, translator=translator
-            )
-            if chapter.status == ChapterStatus.FAILED:
+    Наружу не бросает. Конвейер главы ловит всё сам, а вот обход — нет, и
+    исключение из него уходило в никуда: у выгрузки книги такая страховка
+    была, а у «ещё N глав» её не было. Разница ничем не оправдана — фоновой
+    задаче падать некуда в обоих случаях.
+    """
+    try:
+        with factory() as session:
+            chapter = session.get(Chapter, chapter_id)
+            if chapter is None:
+                log.warning("фоновая задача: глава %s исчезла", chapter_id)
                 return
 
-        if follow:
-            await walk_chapters(
-                session,
-                chapter,
-                fetcher=fetcher,
-                segmenter=segmenter,
-                translator=translator,
-                limit=follow,
-            )
+            if fetch:
+                await run_chapter_pipeline(
+                    session, chapter, fetcher=fetcher, segmenter=segmenter, translator=translator
+                )
+                if chapter.status == ChapterStatus.FAILED:
+                    return
+
+            if follow:
+                await walk_chapters(
+                    session,
+                    chapter,
+                    fetcher=fetcher,
+                    segmenter=segmenter,
+                    translator=translator,
+                    limit=follow,
+                )
+    except Exception:  # noqa: BLE001 — фоновой задаче падать некуда
+        log.exception("фоновая задача по главе %s оборвалась", chapter_id)
 
 
 async def _translate_job(factory: SessionFactory, chapter_id: int, translator: Translator) -> None:
@@ -97,13 +106,6 @@ async def _translate_job(factory: SessionFactory, chapter_id: int, translator: T
         if chapter is None:
             return
         await translate_chapter(session, chapter, translator)
-
-
-def _get_or_404(session: SessionDep, chapter_id: int) -> Chapter:
-    chapter = session.get(Chapter, chapter_id)
-    if chapter is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, ErrorKind.NOT_FOUND)
-    return chapter
 
 
 @router.post("/chapters", status_code=status.HTTP_202_ACCEPTED, response_model=ChapterAccepted)
@@ -167,7 +169,7 @@ def read_chapter(
     разобраны из JSON и сериализованы обратно. Поэтому она собирается из
     дешёвых признаков — что меняется в главе, то в неё и входит.
     """
-    chapter = _get_or_404(session, chapter_id)
+    chapter = get_or_404(session, Chapter, chapter_id)
     next_id = _next_chapter_id(session, chapter)
     etag = _etag(session, chapter, next_id)
 
@@ -225,7 +227,7 @@ def retranslate_chapter(
     translator: TranslatorDep,
 ) -> ChapterAccepted:
     """Дозалить перевод после отказа. Переведённые предложения не переотправляются."""
-    chapter = _get_or_404(session, chapter_id)
+    chapter = get_or_404(session, Chapter, chapter_id)
     if translator is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorKind.TRANSLATE_FAILED)
     if chapter.content is None:
@@ -254,7 +256,7 @@ async def relink_next_chapter(
     Ответ синхронный: это один поход на сайт, и ждать его — секунды. Фоновая
     задача с опросом статуса стоила бы дороже самой работы.
     """
-    chapter = _get_or_404(session, chapter_id)
+    chapter = get_or_404(session, Chapter, chapter_id)
     if chapter.content is None:
         # Глава не загружена: искать в ней ссылку вперёд нечего, её надо
         # загрузить целиком — а это другая кнопка.
@@ -285,7 +287,7 @@ async def read_sentence_audio(
     Ключ кэша — содержимое перевода (`services/speech.py`), поэтому ETag здесь
     честный: у другого текста будет другой файл, и браузер это увидит.
     """
-    chapter = _get_or_404(session, chapter_id)
+    chapter = get_or_404(session, Chapter, chapter_id)
     if synthesizer is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, ErrorKind.SPEECH_FAILED)
 

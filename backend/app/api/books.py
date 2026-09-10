@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Response, status
 
 from app.api.deps import (
     FactoryDep,
@@ -35,6 +35,7 @@ from app.api.deps import (
     SessionDep,
     SessionFactory,
     TranslatorDep,
+    get_or_404,
 )
 from app.api.schemas import BookOut, BookUpdate, BookWalkOut, BookWalkStart, ChapterBrief
 from app.config import settings
@@ -52,13 +53,6 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["books"])
 
 
-def _get_or_404(session: SessionDep, book_id: int) -> Document:
-    document = session.get(Document, book_id)
-    if document is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, ErrorKind.NOT_FOUND)
-    return document
-
-
 @router.get("/books", response_model=list[BookOut])
 def read_books(session: SessionDep) -> list[BookOut]:
     """Книги со счётчиками глав, свежие сверху."""
@@ -68,14 +62,14 @@ def read_books(session: SessionDep) -> list[BookOut]:
 @router.get("/books/{book_id}/chapters", response_model=list[ChapterBrief])
 def read_book_chapters(book_id: int, session: SessionDep) -> list[ChapterBrief]:
     """Оглавление книги в порядке чтения."""
-    _get_or_404(session, book_id)
+    get_or_404(session, Document, book_id)
     return [ChapterBrief.of(chapter) for chapter in list_chapters(session, book_id)]
 
 
 @router.patch("/books/{book_id}", response_model=BookOut)
 def update_book(book_id: int, payload: BookUpdate, session: SessionDep) -> BookOut:
     """Назвать книгу. Пустой заголовок возвращает показ по адресу."""
-    document = _get_or_404(session, book_id)
+    document = get_or_404(session, Document, book_id)
     rename_book(session, document, payload.title)
 
     book = book_row(session, book_id)
@@ -91,7 +85,7 @@ def remove_book(book_id: int, session: SessionDep) -> Response:
     обнуляемым ключом, а текст предложения лежит в карточке копией именно
     затем, чтобы пережить удаление главы (RFC §7).
     """
-    document = _get_or_404(session, book_id)
+    document = get_or_404(session, Document, book_id)
     delete_book(session, document)
     walks.forget(book_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -154,7 +148,7 @@ def start_book_walk(
     ещё один обход: загрузчик всё равно ходит на сайт по одному запросу за раз,
     а счётчик от двух обходов показывал бы вдвое больше сделанного.
     """
-    _get_or_404(session, book_id)
+    get_or_404(session, Document, book_id)
 
     walk = walks.start(book_id, settings.max_chapters_per_book)
     if walk is None:
@@ -177,7 +171,7 @@ def start_book_walk(
 @router.get("/books/{book_id}/walk", response_model=BookWalkOut)
 def read_book_walk(book_id: int, session: SessionDep) -> BookWalkOut:
     """Сколько уже выгружено. Экран книги спрашивает это, пока обход идёт."""
-    _get_or_404(session, book_id)
+    get_or_404(session, Document, book_id)
     walk = walks.current(book_id)
     return BookWalkOut.of(walk) if walk is not None else BookWalkOut.idle(book_id)
 
@@ -193,6 +187,6 @@ def stop_book_walk(book_id: int, session: SessionDep) -> BookWalkOut:
     Без этой ручки часовую выгрузку было нельзя остановить вовсе: нажал —
     и жди, потому что фоновую задачу ждёт и сам uvicorn при остановке сервиса.
     """
-    _get_or_404(session, book_id)
+    get_or_404(session, Document, book_id)
     walk = walks.request_stop(book_id)
     return BookWalkOut.of(walk) if walk is not None else BookWalkOut.idle(book_id)

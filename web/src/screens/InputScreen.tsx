@@ -20,7 +20,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import { ApiError, api, isReadable } from '../api'
+import { ApiError, asApiError, api, isReadable } from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 import { describeStatus } from '../errors'
 import { navigate } from '../router'
@@ -70,7 +70,7 @@ export function InputScreen() {
       setChapterId(accepted.id)
       if (accepted.id === chapterId) await reload()
     } catch (e) {
-      setSendError(e instanceof ApiError ? e : new ApiError('network', String(e)))
+      setSendError(asApiError(e))
     } finally {
       setSending(false)
     }

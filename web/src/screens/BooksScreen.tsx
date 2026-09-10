@@ -30,6 +30,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ApiError,
   api,
+  asApiError,
   isReadable,
   type Book,
   type BookWalk,
@@ -39,6 +40,7 @@ import { bookLabel, describeWalk } from '../books'
 import { ErrorNote } from '../components/ErrorNote'
 import { describeStatus } from '../errors'
 import { hrefFor } from '../router'
+import { useAction } from '../useAction'
 
 /** Как часто спрашивать, сколько уже выгружено. */
 const WALK_POLL_MS = 3000
@@ -57,7 +59,7 @@ function useLoaded<T>(load: () => Promise<T>): {
         setData(value)
         setError(null)
       })
-      .catch((e) => setError(e instanceof ApiError ? e : new ApiError('network', String(e))))
+      .catch((e) => setError(asApiError(e)))
   }, [load])
 
   useEffect(reload, [reload])
@@ -77,26 +79,18 @@ type CardMode = 'idle' | 'renaming' | 'confirming'
 function BookCard({ book, onChanged }: { book: Book; onChanged: () => void }) {
   const [mode, setMode] = useState<CardMode>('idle')
   const [draft, setDraft] = useState(book.title ?? '')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<ApiError | null>(null)
+  const action = useAction()
 
-  async function act(work: () => Promise<unknown>) {
-    setBusy(true)
-    setError(null)
-    try {
+  const act = (work: () => Promise<unknown>) =>
+    action.run('act', async () => {
       await work()
       setMode('idle')
       onChanged()
-    } catch (e) {
-      setError(e instanceof ApiError ? e : new ApiError('network', String(e)))
-    } finally {
-      setBusy(false)
-    }
-  }
+    })
 
   /** Уйти из правки. Сообщение об отказе уходит вместе с ней: оно было про неё. */
   function cancel() {
-    setError(null)
+    action.clear()
     setMode('idle')
   }
 
@@ -117,18 +111,18 @@ function BookCard({ book, onChanged }: { book: Book; onChanged: () => void }) {
             maxLength={200}
             placeholder={bookLabel(book)}
             onChange={(e) => setDraft(e.target.value)}
-            disabled={busy}
+            disabled={action.working}
             aria-label="Название книги"
           />
           <div className="book__actions">
-            <button className="button" type="submit" disabled={busy}>
-              {busy ? 'Сохраняю…' : 'Сохранить'}
+            <button className="button" type="submit" disabled={action.working}>
+              {action.working ? 'Сохраняю…' : 'Сохранить'}
             </button>
             <button
               className="button button--quiet"
               type="button"
               onClick={() => cancel()}
-              disabled={busy}
+              disabled={action.working}
             >
               Отмена
             </button>
@@ -137,7 +131,7 @@ function BookCard({ book, onChanged }: { book: Book; onChanged: () => void }) {
         <p className="muted book__hint">
           Пустое название вернёт показ по адресу: {book.key}
         </p>
-        {error && <ErrorNote kind={error.kind} detail={error.message} />}
+        {action.error && <ErrorNote kind={action.error.kind} detail={action.error.message} />}
       </li>
     )
   }
@@ -154,21 +148,21 @@ function BookCard({ book, onChanged }: { book: Book; onChanged: () => void }) {
               className="button button--danger"
               type="button"
               onClick={() => void act(() => api.deleteBook(book.id))}
-              disabled={busy}
+              disabled={action.working}
             >
-              {busy ? 'Удаляю…' : 'Удалить'}
+              {action.working ? 'Удаляю…' : 'Удалить'}
             </button>
             <button
               className="button button--quiet"
               type="button"
               onClick={() => cancel()}
-              disabled={busy}
+              disabled={action.working}
             >
               Отмена
             </button>
           </div>
         </div>
-        {error && <ErrorNote kind={error.kind} detail={error.message} />}
+        {action.error && <ErrorNote kind={action.error.kind} detail={action.error.message} />}
       </li>
     )
   }
@@ -201,7 +195,7 @@ function BookCard({ book, onChanged }: { book: Book; onChanged: () => void }) {
           Удалить
         </button>
       </div>
-      {error && <ErrorNote kind={error.kind} detail={error.message} />}
+      {action.error && <ErrorNote kind={action.error.kind} detail={action.error.message} />}
     </li>
   )
 }
@@ -275,8 +269,7 @@ function ChapterRow({ chapter }: { chapter: ChapterBrief }) {
 function WalkControl({ bookId, onProgress }: { bookId: number; onProgress: () => void }) {
   const [walk, setWalk] = useState<BookWalk | null>(null)
   const [translate, setTranslate] = useState(false)
-  const [starting, setStarting] = useState(false)
-  const [error, setError] = useState<ApiError | null>(null)
+  const action = useAction()
   // Счётчик опросов. Без него цепочка держится на смене `walk`, и один
   // неудачный запрос останавливает её навсегда: состояние не изменилось —
   // эффект не перезапустился — следующего опроса не будет. А неудачный запрос
@@ -320,17 +313,8 @@ function WalkControl({ bookId, onProgress }: { bookId: number; onProgress: () =>
     wasRunning.current = running
   }, [running])
 
-  async function act(work: () => Promise<BookWalk>) {
-    setStarting(true)
-    setError(null)
-    try {
-      setWalk(await work())
-    } catch (e) {
-      setError(e instanceof ApiError ? e : new ApiError('network', String(e)))
-    } finally {
-      setStarting(false)
-    }
-  }
+  const act = (work: () => Promise<BookWalk>) =>
+    action.run('act', async () => setWalk(await work()))
 
   return (
     <div className="walk">
@@ -339,7 +323,7 @@ function WalkControl({ bookId, onProgress }: { bookId: number; onProgress: () =>
           className="button"
           type="button"
           onClick={() => void act(() => api.walkBook(bookId, translate))}
-          disabled={starting || running}
+          disabled={action.working || running}
         >
           {running ? 'Выгружаю…' : 'Выгрузить всю книгу'}
         </button>
@@ -351,7 +335,7 @@ function WalkControl({ bookId, onProgress }: { bookId: number; onProgress: () =>
             className="button button--quiet"
             type="button"
             onClick={() => void act(() => api.stopBookWalk(bookId))}
-            disabled={starting || walk?.cancelled}
+            disabled={action.working || walk?.cancelled}
           >
             {walk?.cancelled ? 'Останавливаюсь…' : 'Остановить'}
           </button>
@@ -372,7 +356,7 @@ function WalkControl({ bookId, onProgress }: { bookId: number; onProgress: () =>
         {describeWalk(walk, translate)}
       </p>
 
-      {error && <ErrorNote kind={error.kind} detail={error.message} />}
+      {action.error && <ErrorNote kind={action.error.kind} detail={action.error.message} />}
     </div>
   )
 }

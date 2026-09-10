@@ -464,7 +464,7 @@ async def walk_chapters(
     translator: Translator | None = None,
     limit: int,
     on_chapter: Callable[[Chapter], None] | None = None,
-    should_stop: Callable[[], bool] | None = None,
+    should_stop: Callable[[], bool] = walks.shutting_down,
 ) -> WalkResult:
     """Пройти книгу вперёд по ссылкам «следующая глава». Возвращает загруженное.
 
@@ -497,6 +497,14 @@ async def walk_chapters(
     незачем — она докачается за две секунды и ляжет в базу целой, — а вот
     между ними это единственный способ уйти: обход живёт внутри фоновой
     задачи, а её uvicorn при остановке сервиса **ждёт**.
+
+    Способ остановиться здесь ровно один, и это важнее, чем кажется. Раньше их
+    было два — своя проверка на остановку сервиса плюс переданная снаружи, —
+    и они пересекались: `walks.should_stop` уже включает в себя первую.
+    Пересекающиеся проверки не ломались, но каждая правка требовала помнить
+    про обе. Умолчание закрывает случай без книги: «ещё N глав» с экрана
+    чтения обходом в реестре не числится, а прекращаться при остановке
+    сервиса обязано так же.
     """
     result = WalkResult()
     current = chapter
@@ -509,7 +517,7 @@ async def walk_chapters(
 
     while len(result.loaded) < wanted and steps_left > 0:
         steps_left -= 1
-        if walks.shutting_down() or (should_stop is not None and should_stop()):
+        if should_stop():
             log.info("обход книги от главы %s прекращён по просьбе", chapter.id)
             break
 

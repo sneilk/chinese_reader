@@ -13,6 +13,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  asApiError,
   ApiError,
   api,
   audioUrl,
@@ -298,5 +299,36 @@ describe('статусы главы', () => {
   ] as [ChapterStatus, boolean][])('%s требует опроса: %s', (status, expected) => {
     // Опрос обязан прекращаться сам: таймер не должен жить дольше работы.
     expect(isPending(status)).toBe(expected)
+  })
+})
+
+describe('asApiError', () => {
+  it('свой отказ пропускает как есть — вместе с kind', () => {
+    const original = new ApiError('challenge', 'сайт просит проверку')
+
+    expect(asApiError(original)).toBe(original)
+    expect(asApiError(original).kind).toBe('challenge')
+  })
+
+  it.each([
+    ['чужое исключение', new TypeError('undefined is not a function')],
+    ['строка', 'что-то пошло не так'],
+    ['ничего', undefined],
+    ['null', null],
+  ])('%s становится сетевым отказом', (_label, thrown) => {
+    const got = asApiError(thrown)
+
+    expect(got).toBeInstanceOf(ApiError)
+    expect(got.kind).toBe('network')
+  })
+
+  it('подробность не теряется: без неё чинить нечем', () => {
+    expect(asApiError(new TypeError('сломалось тут')).message).toContain('сломалось тут')
+  })
+
+  it('kind у всего чужого один, и на него есть объяснение в errors.ts', () => {
+    // Экраны подбирают текст по kind. Незнакомый kind даёт «непонятную
+    // ошибку» — то есть отказ без совета, что делать.
+    expect(asApiError('что угодно').kind).toBe('network')
   })
 })

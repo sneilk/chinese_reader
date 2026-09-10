@@ -18,6 +18,7 @@
 import { useEffect, useState } from 'react'
 import {
   ApiError,
+  asApiError,
   api,
   browserScreenshotUrl,
   type BrowserCheck,
@@ -150,11 +151,10 @@ function SpeechProbe() {
     try {
       setResult(await api.speechCheck())
     } catch (e) {
-      setResult({
-        ok: false,
-        kind: e instanceof ApiError ? e.kind : 'network',
-        detail: e instanceof ApiError ? e.message : String(e),
-      })
+      // Отказ проверки — это и есть её результат: показывается там же, где
+      // удачный ответ, а не отдельным сообщением над экраном.
+      const failure = asApiError(e)
+      setResult({ ok: false, kind: failure.kind, detail: failure.message })
     } finally {
       setBusy(false)
     }
@@ -207,7 +207,7 @@ function BrowserProbe() {
       setResult(got)
       setStamp(Date.now())
     } catch (e) {
-      setError(e instanceof ApiError ? e : new ApiError('network', String(e)))
+      setError(asApiError(e))
     } finally {
       setBusy(false)
     }
@@ -320,7 +320,7 @@ export function DiagnosticsScreen() {
         setData(d)
         setError(null)
       })
-      .catch((e) => setError(e instanceof ApiError ? e : new ApiError('network', String(e))))
+      .catch((e) => setError(asApiError(e)))
   }
 
   useEffect(load, [])

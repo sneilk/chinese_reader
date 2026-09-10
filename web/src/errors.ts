@@ -103,8 +103,32 @@ const UNKNOWN: ErrorInfo = {
   readable: false,
 }
 
+/**
+ * Ответ без нашего тела: до бэкенда не дошли или он ответил не по формату.
+ *
+ * `kind` вида `http_502` заводит сам клиент, когда в ответе нет `{error:
+ * {kind}}` — то есть отвечал не сервис, а прокси перед ним. Случай не
+ * экзотический: бэкенд перезапускается на **каждой выкладке**, и всё это
+ * время открытая вкладка получает 502. До сих пор она показывала «Непонятная
+ * ошибка. Подробность стоит показать разработчику» — то есть пугала и
+ * советовала не то в самой обычной ситуации.
+ */
+const GATEWAY: ErrorInfo = {
+  title: 'Сервис сейчас недоступен',
+  advice:
+    'Чаще всего это выкладка: бэкенд перезапускается несколько секунд. ' +
+    'Подождите и повторите — данные никуда не делись.',
+  retryable: true,
+  readable: false,
+}
+
+/** Прокси ответил, а сервиса за ним не оказалось. */
+const GATEWAY_STATUSES = new Set(['http_404', 'http_500', 'http_502', 'http_503', 'http_504'])
+
 export function describeError(kind: ErrorKind | string): ErrorInfo {
-  return MESSAGES[kind] ?? UNKNOWN
+  const known = MESSAGES[kind]
+  if (known) return known
+  return GATEWAY_STATUSES.has(kind) ? GATEWAY : UNKNOWN
 }
 
 /**

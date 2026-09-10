@@ -66,10 +66,16 @@ class BookRow:
     readable: int
 
 
-def list_books(session: Session) -> list[BookRow]:
-    """Книги со счётчиками глав. Пустых книг не бывает — их не из чего завести."""
+def _books_query():
+    """Книга со счётчиками глав. Общее для списка и для одной записи.
+
+    Счётчики важнее, чем кажется: разница между «сколько загружено» и «сколько
+    можно читать» — это ровно те главы, что не дошли. Считать их в двух местах
+    по-разному значило бы показывать в списке одно, а после переименования
+    другое.
+    """
     readable = func.sum(case((Chapter.status.in_(READABLE), 1), else_=0))
-    rows = session.execute(
+    return (
         select(
             Document.id,
             Document.key,
@@ -82,27 +88,38 @@ def list_books(session: Session) -> list[BookRow]:
         .join(Source, Source.id == Document.source_id)
         .outerjoin(Chapter, Chapter.document_id == Document.id)
         .group_by(Document.id)
-        # Книга, к которой недавно возвращались, нужнее той, что лежит с весны.
-        .order_by(func.max(Chapter.created_at).desc())
-    ).all()
+    )
 
-    return [
-        BookRow(
-            id=row[0],
-            key=row[1],
-            title=row[2],
-            lang=row[3],
-            site=row[4],
-            chapters=int(row[5] or 0),
-            readable=int(row[6] or 0),
-        )
-        for row in rows
-    ]
+
+def _to_row(row) -> BookRow:
+    return BookRow(
+        id=row[0],
+        key=row[1],
+        title=row[2],
+        lang=row[3],
+        site=row[4],
+        chapters=int(row[5] or 0),
+        readable=int(row[6] or 0),
+    )
+
+
+def list_books(session: Session) -> list[BookRow]:
+    """Книги со счётчиками глав. Пустых книг не бывает — их не из чего завести."""
+    rows = session.execute(
+        # Книга, к которой недавно возвращались, нужнее той, что лежит с весны.
+        _books_query().order_by(func.max(Chapter.created_at).desc())
+    ).all()
+    return [_to_row(row) for row in rows]
 
 
 def book_row(session: Session, book_id: int) -> BookRow | None:
-    """Одна книга в том же виде, в каком она едет в списке."""
-    return next((book for book in list_books(session) if book.id == book_id), None)
+    """Одна книга в том же виде, в каком она едет в списке.
+
+    Спрашивается по ключу, а не выбирается из полного списка: у ответа на
+    переименование нет причин пересчитывать главы всех остальных книг.
+    """
+    row = session.execute(_books_query().where(Document.id == book_id)).first()
+    return _to_row(row) if row is not None else None
 
 
 def rename_book(session: Session, document: Document, title: str | None) -> Document:

@@ -245,6 +245,21 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Привести пойманное к `ApiError`.
+ *
+ * В `catch` попадает `unknown`, а экранам нужен `kind`: по нему подбирается
+ * человеческое объяснение (`errors.ts`), и без него любой отказ выглядит
+ * одинаково. Всё, что прилетело не от нас — оборванный запрос, `TypeError` из
+ * обработчика, — это для читателя одно и то же: сервер не ответил.
+ *
+ * Было двенадцатью копиями одной строки в шести файлах. Разъехаться им ещё не
+ * успело, но менять пришлось бы все двенадцать.
+ */
+export function asApiError(cause: unknown): ApiError {
+  return cause instanceof ApiError ? cause : new ApiError('network', String(cause))
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
