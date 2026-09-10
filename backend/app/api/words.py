@@ -11,11 +11,10 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.deps import OptionalSegmenterDep, SessionDep
+from app.api.deps import OptionalSegmenterDep, SessionDep, get_or_404
 from app.api.schemas import WordCreate, WordOut, WordsPage, WordUpdate
 from app.config import settings
 from app.db.models import UserWord
-from app.domain import ErrorKind
 from app.lang.segment import teach_word
 from app.services.words import (
     ContextInput,
@@ -29,13 +28,6 @@ from app.services.words import (
 log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["words"])
-
-
-def _get_or_404(session: SessionDep, word_id: int) -> UserWord:
-    word = session.get(UserWord, word_id)
-    if word is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, ErrorKind.NOT_FOUND)
-    return word
 
 
 @router.post("/words", status_code=status.HTTP_201_CREATED, response_model=WordOut)
@@ -101,7 +93,7 @@ def read_words(
 
 @router.patch("/words/{word_id}", response_model=WordOut)
 def patch_word(word_id: int, payload: WordUpdate, session: SessionDep) -> WordOut:
-    word = _get_or_404(session, word_id)
+    word = get_or_404(session, UserWord, word_id)
     updated = update_word(
         session,
         word,
@@ -114,4 +106,4 @@ def patch_word(word_id: int, payload: WordUpdate, session: SessionDep) -> WordOu
 
 @router.delete("/words/{word_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_word(word_id: int, session: SessionDep) -> None:
-    delete_word(session, _get_or_404(session, word_id))
+    delete_word(session, get_or_404(session, UserWord, word_id))
