@@ -18,7 +18,12 @@ from app.domain import ChapterStatus, ErrorKind
 from app.fetchers.base import FetchFailure, FetchResult
 from app.lang.segment import Segmenter
 from app.providers.translate import TranslateFailure, TranslateResult
-from app.services.pipeline import recover_interrupted, run_chapter_pipeline, translate_chapter
+from app.services import budget
+from app.services.pipeline import (
+    recover_interrupted,
+    run_chapter_pipeline,
+    translate_chapter,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -364,3 +369,83 @@ async def test_recovered_chapter_can_be_retried(session, chapter, segmenter):
 
     assert chapter.status == ChapterStatus.READY
     assert chapter.error_kind is None
+
+
+# --- отказ на середине перевода ---
+#
+# Глава длиннее батча уезжает несколькими запросами, каждый тарифицируется
+# отдельно. Раньше отказ на втором выбрасывал оплаченный первый, и обещание в
+# шапке translate_chapter — «повтор стоит только недостающих символов» — было
+# недостижимым: состояния «часть переведена, часть нет» не мог создать ни один
+# путь кода.
+
+
+class PartialTranslator:
+    """Переводит первые `upto` предложений и падает, как настоящий клиент."""
+
+    def __init__(self, upto: int) -> None:
+        self._upto = upto
+        self.seen: list[list[str]] = []
+
+    async def translate(self, texts, *, source: str = "zh") -> TranslateResult:
+        self.seen.append(list(texts))
+        done = list(texts)[: self._upto]
+        partial = TranslateResult(
+            texts=[f"пер:{t}" for t in done],
+            chars_sent=sum(len(t) for t in done),
+            requests=1,
+        )
+        raise TranslateFailure("провайдер устал на середине", partial=partial)
+
+
+async def test_partial_translation_is_saved(session, chapter, segmenter):
+    tr = PartialTranslator(upto=2)
+    await _run(session, chapter, segmenter, translator=tr)
+
+    done = [s for s in chapter.sentences if s.translation is not None]
+    assert len(done) == 2, "оплаченное обязано лечь в базу, а не уехать с исключением"
+    assert all(s.translation.startswith("пер:") for s in done)
+
+    # Глава читаема, причина названа: это состояние, а не потеря.
+    assert chapter.status == ChapterStatus.SEGMENTED
+    assert chapter.error_kind == ErrorKind.TRANSLATE_FAILED
+
+
+async def test_partial_translation_lands_on_the_first_sentences(session, chapter, segmenter):
+    """Раскладка держится на порядке: короткий ответ ложится на начало."""
+    await _run(session, chapter, segmenter, translator=PartialTranslator(upto=2))
+
+    ordered = sorted(chapter.sentences, key=lambda s: s.idx)
+    assert [s.translation is not None for s in ordered][:2] == [True, True]
+    assert not any(s.translation for s in ordered[2:])
+
+
+async def test_partial_spend_is_recorded(session, chapter, segmenter):
+    """Потолок расходов слеп ровно к тому, что не записано."""
+    await _run(session, chapter, segmenter, translator=PartialTranslator(upto=2))
+
+    assert budget.chars_this_month(session) > 0, "за отправленное выставлен счёт"
+    assert chapter.chars_sent > 0
+
+
+async def test_retry_after_partial_sends_only_what_is_missing(session, chapter, segmenter):
+    """То самое обещание из шапки translate_chapter, впервые достижимое."""
+    await _run(session, chapter, segmenter, translator=PartialTranslator(upto=2))
+    total = len(chapter.sentences)
+
+    second = FakeTranslator()
+    await translate_chapter(session, chapter, second)
+
+    assert len(second.seen) == 1
+    assert len(second.seen[0]) == total - 2, "переотправлять оплаченное незачем"
+    assert chapter.status == ChapterStatus.READY
+    assert all(s.translation for s in chapter.sentences)
+
+
+async def test_nothing_translated_records_nothing(session, chapter, segmenter):
+    """Не дошли до провайдера — и записывать нечего: сбой сети ничего не стоил."""
+    await _run(session, chapter, segmenter, translator=PartialTranslator(upto=0))
+
+    assert not any(s.translation for s in chapter.sentences)
+    assert chapter.chars_sent == 0
+    assert budget.chars_this_month(session) == 0

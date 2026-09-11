@@ -216,3 +216,86 @@ async def test_broken_json_is_rejected():
 
     with pytest.raises(TranslateFailure, match="JSON"):
         await _translator(handler).translate(["текст"])
+
+
+# --- отказ на середине: за успевшие батчи уже заплачено ---
+#
+# Глава длиннее батча уезжает несколькими запросами, и каждый тарифицируется
+# отдельно. Пока отказ на втором запросе выбрасывал первый, цена ошибки была
+# тройной: переводы терялись, потраченное не попадало ни в один счётчик, а
+# повтор слал оплаченное заново.
+
+
+def _fails_after(successes: int):
+    """Провайдер, отвечающий `successes` раз, а дальше падающий."""
+    state = {"calls": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        state["calls"] += 1
+        if state["calls"] > successes:
+            return httpx.Response(500, text="провайдер устал")
+        return _echo(request)
+
+    return handler
+
+
+async def test_failure_mid_way_keeps_what_was_paid_for():
+    texts = ["а" * 40, "б" * 40, "в" * 40]
+
+    with pytest.raises(TranslateFailure) as e:
+        await _translator(_fails_after(1), batch_chars=100).translate(texts)
+
+    partial = e.value.partial
+    assert partial is not None, "оплаченный батч обязан уехать наверх вместе с отказом"
+    assert partial.texts == ["пер:" + "а" * 40, "пер:" + "б" * 40]
+    assert partial.chars_sent == 80, "платим за то, что отправили, и только"
+    assert partial.requests == 1
+
+
+async def test_failure_on_the_first_batch_has_nothing_to_keep():
+    """Терять нечего — и выдумывать частичный ответ не надо."""
+    with pytest.raises(TranslateFailure) as e:
+        await _translator(_fails_after(0), batch_chars=100).translate(["а" * 40, "б" * 40])
+
+    assert e.value.partial is None
+
+
+async def test_partial_lines_up_with_the_first_sentences():
+    """Порядок — то, на чём держится раскладка по предложениям."""
+    texts = [f"фраза{i}" for i in range(10)]
+
+    with pytest.raises(TranslateFailure) as e:
+        await _translator(_fails_after(2), batch_chars=12).translate(texts)
+
+    partial = e.value.partial
+    assert partial.texts == [f"пер:{t}" for t in texts[: len(partial.texts)]]
+
+
+async def test_length_mismatch_is_caught_per_batch():
+    """По итоговой сумме не узнать, какой запрос ответил не тем."""
+    state = {"calls": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        state["calls"] += 1
+        if state["calls"] == 1:
+            return _echo(request)
+        # Второй батч отвечает одним переводом на два предложения.
+        return httpx.Response(200, json={"translations": [{"text": "один"}]})
+
+    texts = ["а" * 40, "б" * 40, "в" * 40, "г" * 40]
+    with pytest.raises(TranslateFailure) as e:
+        await _translator(handler, batch_chars=100).translate(texts)
+
+    assert "переводов вместо" in e.value.detail
+    assert e.value.partial is not None, "первый батч ответил верно и остаётся в силе"
+    assert e.value.partial.texts == ["пер:" + "а" * 40, "пер:" + "б" * 40]
+
+
+async def test_success_still_returns_everything():
+    """Общий путь не должен пострадать от появления частичного."""
+    texts = ["а" * 40, "б" * 40, "в" * 40]
+    got = await _translator(_echo, batch_chars=100).translate(texts)
+
+    assert len(got.texts) == len(texts)
+    assert got.chars_sent == 120
+    assert got.requests == 2

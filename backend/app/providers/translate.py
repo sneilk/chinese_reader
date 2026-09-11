@@ -54,23 +54,38 @@ MIN_BILLED_CHARS = 1
 RETRIABLE_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 
-class TranslateFailure(Exception):
-    """Перевод не удался. Причина одна: глава при этом остаётся читаемой."""
-
-    kind = ErrorKind.TRANSLATE_FAILED
-
-    def __init__(self, detail: str) -> None:
-        super().__init__(detail)
-        self.detail = detail
-
-
 @dataclass(frozen=True)
 class TranslateResult:
-    """Переводы в порядке входа плюс то, за что заплачено."""
+    """Переводы в порядке входа плюс то, за что заплачено.
+
+    `texts` может быть **короче** запрошенного: это успевшая часть, когда
+    отказ случился на середине. Порядок при этом сохранён, поэтому такой
+    результат ложится ровно на первые `len(texts)` предложений и ни на какие
+    другие.
+    """
 
     texts: list[str]
     chars_sent: int
     requests: int
+
+
+class TranslateFailure(Exception):
+    """Перевод не удался. Причина одна: глава при этом остаётся читаемой.
+
+    `partial` — то, что провайдер успел вернуть **до** отказа, и за что уже
+    выставлен счёт. Раньше эта часть просто выбрасывалась вместе с
+    исключением, и цена ошибки была тройной: переводы терялись, потраченные
+    деньги не попадали ни в один счётчик, а повтор переотправлял оплаченное
+    заново. `None` — терять нечего: не дошли до провайдера вовсе, либо ответ
+    пришёл битым и доверять ему нельзя.
+    """
+
+    kind = ErrorKind.TRANSLATE_FAILED
+
+    def __init__(self, detail: str, partial: TranslateResult | None = None) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.partial = partial
 
 
 class Translator(Protocol):
@@ -163,7 +178,21 @@ class YandexTranslate:
     async def translate(
         self, texts: Sequence[str], *, source: str = SOURCE_LANG
     ) -> TranslateResult:
-        """Перевести предложения. Бросает TranslateFailure с одной причиной."""
+        """Перевести предложения. Бросает TranslateFailure с одной причиной.
+
+        Глава длиннее батча уезжает несколькими запросами, и каждый из них
+        тарифицируется отдельно. Поэтому отказ на втором запросе **не
+        отменяет первый**: за него уже выставлен счёт, и выбросить его
+        значило бы заплатить дважды за один и тот же текст. Успевшая часть
+        уходит наверх вместе с исключением (`TranslateFailure.partial`), а
+        конвейер её сохраняет — после чего повтор досылает только недостающее.
+
+        Длину ответа сверяет `_translate_batch`, побатчно. Это важно именно
+        здесь: расхождение молча испортило бы раскладку по предложениям —
+        сдвиг на один, и вся глава переведена «не про то», — а по итоговой
+        сумме нельзя понять, какой из запросов ответил не тем. Побатчная
+        сверка и находит виноватого, и оставляет в силе всё, что было до него.
+        """
         if not texts:
             return TranslateResult(texts=[], chars_sent=0, requests=0)
         if not self._api_key or not self._folder_id:
@@ -171,17 +200,27 @@ class YandexTranslate:
 
         out: list[str] = []
         chars = 0
+        done = 0
         batches = make_batches(texts, self._batch_chars)
+
         for batch in batches:
-            out.extend(await self._translate_batch(batch, source))
+            try:
+                # Длину ответа сверяет сам `_translate_batch`: расхождение —
+                # это отказ этого запроса, а не итога, и всё, что пришло до
+                # него, остаётся в силе.
+                translated = await self._translate_batch(batch, source)
+            except TranslateFailure as e:
+                if not out:
+                    raise
+                raise TranslateFailure(
+                    e.detail, partial=TranslateResult(texts=out, chars_sent=chars, requests=done)
+                ) from e
+
+            out.extend(translated)
             chars += billed_chars(batch)
+            done += 1
 
-        if len(out) != len(texts):
-            # Расхождение длин молча испортило бы раскладку по предложениям:
-            # сдвиг на один — и вся глава переведена «не про то».
-            raise TranslateFailure(f"ответ не совпал по длине: {len(out)} вместо {len(texts)}")
-
-        return TranslateResult(texts=out, chars_sent=chars, requests=len(batches))
+        return TranslateResult(texts=out, chars_sent=chars, requests=done)
 
     async def _translate_batch(self, batch: Sequence[str], source: str) -> list[str]:
         client = await self._get_client()

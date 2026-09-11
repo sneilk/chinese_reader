@@ -61,7 +61,12 @@ from app.lang import segment_en
 from app.lang.normalize import normalize
 from app.lang.segment import Segmenter, Token, tokens_to_json
 from app.lang.sentences import split_sentences
-from app.providers.translate import TARGET_LANG, TranslateFailure, Translator
+from app.providers.translate import (
+    TARGET_LANG,
+    TranslateFailure,
+    TranslateResult,
+    Translator,
+)
 from app.services import budget, walks
 from app.services.books import chain_tail
 from app.services.chapters import canonical, get_or_create_chapter
@@ -293,11 +298,25 @@ async def translate_chapter(
         result = await translator.translate(texts, source=source)
     except TranslateFailure as e:
         # Глава остаётся читаемой: текст и токены на месте, нет только переводов.
+        #
+        # Успевшую часть сохраняем, и это не мелочь. Глава длиннее батча
+        # уезжает несколькими запросами, каждый тарифицируется отдельно, и
+        # отказ на втором раньше выбрасывал оплаченный первый: переводы
+        # терялись, деньги не попадали ни в один счётчик, а повтор слал то же
+        # самое заново. Теперь повтор досылает ровно недостающее — как и
+        # обещано в шапке этой функции.
+        saved = _save_translations(session, chapter, pending, e.partial, source)
         chapter.status = ChapterStatus.SEGMENTED
         chapter.error_kind = ErrorKind.TRANSLATE_FAILED
         chapter.error_detail = e.detail[:2000]
         session.commit()
-        log.warning("глава %s: перевод не удался — %s", chapter.id, e.detail[:200])
+        log.warning(
+            "глава %s: перевод не удался на %s из %s предложений — %s",
+            chapter.id,
+            saved,
+            len(pending),
+            e.detail[:200],
+        )
         return chapter
     except Exception as e:  # noqa: BLE001 — тот же расчёт, что и выше
         log.exception("глава %s: непредвиденная ошибка перевода", chapter.id)
@@ -307,20 +326,7 @@ async def translate_chapter(
         session.commit()
         return chapter
 
-    translated_at = _now()
-    for sentence, text in zip(pending, result.texts, strict=True):
-        sentence.translation = text
-        sentence.translated_at = translated_at
-
-    budget.record(
-        session,
-        provider="yandex",
-        direction=f"{source}-{TARGET_LANG}",
-        chars_sent=result.chars_sent,
-        sentences=len(pending),
-        chapter_id=chapter.id,
-    )
-    chapter.chars_sent += result.chars_sent
+    _save_translations(session, chapter, pending, result, source)
     chapter.status = ChapterStatus.READY
     chapter.error_kind = None
     chapter.error_detail = None
@@ -333,6 +339,57 @@ async def translate_chapter(
         result.requests,
     )
     return chapter
+
+
+def _save_translations(
+    session: Session,
+    chapter: Chapter,
+    pending: Sequence[Sentence],
+    result: TranslateResult | None,
+    source: Language,
+) -> int:
+    """Разложить переводы по предложениям и записать расход. Сколько сохранили.
+
+    Один путь и для полного ответа, и для частичного: разница только в длине
+    `result.texts`. Порядок ответа совпадает с порядком `pending` — на этом
+    держится вся раскладка, — поэтому короткий ответ ложится ровно на первые
+    предложения и ни на какие другие.
+
+    Расход пишется только за то, что провайдер подтвердил. За оборванный
+    запрос не пишем ничего: там неизвестно, дошёл он или нет, и записав его,
+    мы бы съедали месячный потолок обычными сетевыми сбоями, которые ничего не
+    стоили (`db/models.py`, TranslationUsage).
+    """
+    if result is None or not result.texts:
+        return 0
+
+    if len(result.texts) > len(pending):
+        # Ответ длиннее запроса — раскладка поехала. `zip` тут короче не
+        # спасает: сдвиг на один означает, что вся глава переведена «не про
+        # то», и заметить это можно будет только читая. Лучше без переводов.
+        log.error(
+            "глава %s: переводов пришло больше, чем просили (%s > %s) — не сохраняю",
+            chapter.id,
+            len(result.texts),
+            len(pending),
+        )
+        return 0
+
+    translated_at = _now()
+    for sentence, text in zip(pending, result.texts, strict=False):
+        sentence.translation = text
+        sentence.translated_at = translated_at
+
+    budget.record(
+        session,
+        provider="yandex",
+        direction=f"{source}-{TARGET_LANG}",
+        chars_sent=result.chars_sent,
+        sentences=len(result.texts),
+        chapter_id=chapter.id,
+    )
+    chapter.chars_sent += result.chars_sent
+    return len(result.texts)
 
 
 def recover_interrupted(session: Session) -> tuple[int, int]:
