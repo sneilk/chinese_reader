@@ -228,7 +228,10 @@ export function ReaderScreen({ id }: { id: number }) {
       await reload()
     })
 
-  if (requestError) {
+  // Показывать нечего — только тогда отказ занимает весь экран. Если глава уже
+  // открыта, а упал фоновый опрос, забирать у читателя текст не за что: он на
+  // месте вместе с разметкой и прокруткой, просто статус не подтвердился.
+  if (requestError && !chapter) {
     return <ErrorNote kind={requestError.kind} detail={requestError.message} onRetry={reload} />
   }
 
@@ -245,6 +248,14 @@ export function ReaderScreen({ id }: { id: number }) {
         <h1 className="reader__title" lang={lang === 'zh' ? 'zh-Hans' : 'en'}>
           {chapter.title}
         </h1>
+      )}
+
+      {/* Опрос не достучался, но глава открыта: строкой сверху, а не вместо
+          текста. Читать можно дальше — не обновляется только статус. */}
+      {requestError && (
+        <p className="muted progress" role="status" aria-live="polite">
+          Не удаётся обновить состояние главы. Читать можно, попробую ещё раз.
+        </p>
       )}
 
       {chapter.error && (
