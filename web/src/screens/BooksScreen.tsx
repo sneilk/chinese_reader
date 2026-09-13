@@ -172,10 +172,10 @@ function BookCard({ book, onChanged }: { book: Book; onChanged: () => void }) {
       <a className="book__link" href={hrefFor({ name: 'book', id: book.id })}>
         <span className="book__name">{bookLabel(book)}</span>
         <span className="book__meta muted">
-          {book.site} · {book.lang === 'zh' ? 'китайский' : 'английский'}
+          {book.site} · {book.lang === 'zh' ? 'китайский' : 'английский'} ·{' '}
+          {describeCounts(book)}
         </span>
       </a>
-      <span className="book__count muted">{describeCounts(book)}</span>
       <div className="book__actions">
         <button
           className="button button--quiet"
@@ -235,7 +235,11 @@ function ChapterRow({ chapter }: { chapter: ChapterBrief }) {
       <span className="toc__title" lang={chapter.lang === 'zh' ? 'zh-Hans' : 'en'}>
         {label}
       </span>
-      {!readable && <span className="toc__state muted">{describeStatus(chapter.status)}</span>}
+      {/* Причина отказа говорит и о том, что он случился: «failed challenge» —
+          это одно и то же дважды, и первое слово ничего не добавляет. */}
+      {!readable && !chapter.error && (
+        <span className="toc__state muted">{describeStatus(chapter.status)}</span>
+      )}
       {chapter.error && <span className="toc__state toc__state--bad">{chapter.error.kind}</span>}
     </>
   )

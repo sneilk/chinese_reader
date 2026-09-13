@@ -998,10 +998,6 @@ a {
   font-size: 0.85rem;
 }
 
-.book__count {
-  white-space: nowrap;
-  font-size: 0.9rem;
-}
 
 .toc {
   list-style: none;
@@ -1044,7 +1040,12 @@ a {
 .toc__title {
   flex: 1;
   min-width: 0;
-  overflow-wrap: anywhere;
+  /* Обрезаем, а не переносим: строки оглавления должны быть одной высоты,
+     иначе список из двадцати глав идёт лесенкой и по нему не пробежать
+     глазами. Полное название всё равно видно в самой главе. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toc__state {
